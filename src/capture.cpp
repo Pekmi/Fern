@@ -14,8 +14,8 @@ D3D11Context GetD3D11Device() {
     ID3D11DeviceContext* deviceContext = nullptr;
     D3D_FEATURE_LEVEL featureLevel;
 
-    // Create a D3D11 device
-    UINT creationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+    //cree D3D11 device
+    UINT creationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT;
 
     HRESULT hr = D3D11CreateDevice(
         nullptr,                    // Use default adapter
@@ -87,10 +87,10 @@ IDXGIOutputDuplication* getOutputDuplication(ID3D11Device* device, IDXGIOutput1*
 #pragma region capture 
 
 //resource (image)
-IDXGIResource* getResource(IDXGIOutputDuplication* outputDuplication) {
+IDXGIResource* getResource(IDXGIOutputDuplication* outputDuplication, UINT timeout) {
     DXGI_OUTDUPL_FRAME_INFO frameInfo;
     IDXGIResource* resource = nullptr;
-    outputDuplication->AcquireNextFrame(500, &frameInfo, &resource);
+    outputDuplication->AcquireNextFrame(timeout, &frameInfo, &resource);
     return resource;
 }
 
@@ -133,6 +133,5 @@ void MapAndPrintPixel(ID3D11DeviceContext* deviceContext, ID3D11Texture2D* stagi
     
     deviceContext->CopyResource(stagingTexture, capturedTexture);
     deviceContext->Map(stagingTexture, 0, D3D11_MAP_READ, 0, &mapped);
-    //logique ici
     deviceContext->Unmap(stagingTexture, 0);
 }

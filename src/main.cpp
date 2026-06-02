@@ -1,8 +1,10 @@
 #include <iostream>
 #include <vector>
+#include <mferror.h>
 
 #include "../include/fern/capture.h"
 #include "../include/fern/encoder.h"
+#include "../include/fern/buffer.h"
 
 int main() {
     std::cout << "== SETUP ==" << std::endl;
@@ -37,34 +39,34 @@ int main() {
     outputDuplication->GetDesc(&desc);
     std::wcout << "> Resolution sortie dupliquee : " << desc.ModeDesc.Width << "x" << desc.ModeDesc.Height << std::endl;
 
-    // std::cout << "Attrape l'image" << std::endl;
-    // IDXGIResource* resource = getResource(outputDuplication);
-    
     std::cout << "== TRAITEMENT ==" << std::endl;
-
-    // ID3D11Texture2D* texture = resourceToTexture(resource);
-    // ID3D11Texture2D* stagingTexture = createStagingTexture(device, texture);
-    // MapAndPrintPixel(deviceContext, stagingTexture);
 
     HRESULT hr = InitializeMediaFoundation();
     if (SUCCEEDED(hr)) { std::cout << "Media Foundation ok" << std::endl; }
     else { std::cerr << "Media Foundation erreur : " << hr << std::endl; }
+
     DXGIDeviceManagerAndUInt dxgiDeviceManager = CreateDXGIDeviceManager(device);
-    IMFSinkWriter* sinkWriter = nullptr;
-    DWORD streamIndex = 0;
-    hr = CreateSinkWriter(L"output.mp4", dxgiDeviceManager.deviceManager, &sinkWriter, &streamIndex, desc.ModeDesc.Width, desc.ModeDesc.Height);
+    IMFTransform* pEncoder = nullptr;
+    hr = InitializeHardwareEncoder(dxgiDeviceManager.deviceManager, &pEncoder, desc.ModeDesc.Width, desc.ModeDesc.Height);
+    
     if (FAILED(hr)) {
-        std::cerr << "erreur creation sink writer : " << hr << std::endl;
+        std::cerr << "erreur initialisation encodeur hardware : " << hr << std::endl;
         ShutdownMediaFoundation();
         return -1; 
     } 
     else {
-        LONGLONG hnsTimestamp = 0;
-        UINT fps = 60;
-        std::cout << "Enregistrement" << std::endl;
+        std::cout << "Encodeur hardware initialise avec succes" << std::endl;
+        
+        //cree tampon circulaire (30s)
+        RingBuffer ringBuffer(30LL * 10000000LL);
 
-        // 1. Créer la texture de copie UNE SEULE FOIS avant la boucle
-        ID3D11Texture2D* copyTexture = nullptr;
+        //gen d'events de l'encodeur
+        ComPtr<IMFMediaEventGenerator> pEventGen;
+        hr = pEncoder->QueryInterface(IID_PPV_ARGS(&pEventGen));
+        if (FAILED(hr)) return -1;
+
+        //crée texture de copie (Zero-Copy source)
+        ComPtr<ID3D11Texture2D> copyTexture;
         D3D11_TEXTURE2D_DESC copyDesc = {};
         copyDesc.Width = desc.ModeDesc.Width;
         copyDesc.Height = desc.ModeDesc.Height;
@@ -74,41 +76,66 @@ int main() {
         copyDesc.SampleDesc.Count = 1;
         copyDesc.Usage = D3D11_USAGE_DEFAULT;
         copyDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-        
         device->CreateTexture2D(&copyDesc, nullptr, &copyTexture);
 
-        for (int i = 0; i < 600; ++i) {
-            IDXGIResource* resource = getResource(outputDuplication);
-            if (resource == nullptr) {
-                hnsTimestamp += 10000000 / fps;
-                continue; 
-            }
-            ID3D11Texture2D* texture = resourceToTexture(resource);
-            
-            // 2. Copier et encoder
-            if (copyTexture) {
-                deviceContext->CopyResource(copyTexture, texture);
-                hr = EncodeFrame(sinkWriter, streamIndex, copyTexture, hnsTimestamp);
+        //démarre le flux
+        pEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
+        pEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
+
+        std::cout << "Capture en cours (600 frames)..." << std::endl;
+        LONGLONG hnsTimestamp = 0;
+        int framesProduced = 0;
+
+        for (int i = 0; i < 600; ) {
+            ComPtr<IMFMediaEvent> pEvent;
+            hr = pEventGen->GetEvent(0, &pEvent);
+            if (FAILED(hr)) break;
+
+            MediaEventType eventType;
+            pEvent->GetType(&eventType);
+
+            if (eventType == METransformNeedInput) {
+                //attrape une nouvelle image
+                IDXGIResource* resource = getResource(outputDuplication);
                 
-                if (FAILED(hr)) {
-                    std::cerr << "erreur encodage frame : " << hr << std::endl;
-                    texture->Release();
+                if (resource) {
+                    ComPtr<ID3D11Texture2D> texture = resourceToTexture(resource);
+                    deviceContext->CopyResource(copyTexture.Get(), texture.Get());
                     resource->Release();
-                    break;
+                    outputDuplication->ReleaseFrame();
+                } 
+                
+                //envoie toujours copyTexture (nouvelle ou ancienne)
+                if (SUCCEEDED(PushFrameToEncoder(pEncoder, copyTexture.Get(), hnsTimestamp))) {
+                    hnsTimestamp += 166666;
+                    i++;
                 }
             }
-            
-            hnsTimestamp += 10000000 / fps;
-            texture->Release(); // 3. Libérer la texture capturée
-            resource->Release();
-            outputDuplication->ReleaseFrame(); // 4. Relâcher le verrou immédiatement
+            else if (eventType == METransformHaveOutput) {
+                ComPtr<IMFSample> pSample;
+                if (SUCCEEDED(PullSampleFromEncoder(pEncoder, &pSample))) {
+                    framesProduced++;
+                    ringBuffer.AddSample(pSample.Get());
+                    if (framesProduced % 60 == 0) {
+                        std::cout << ">>> RAM: " << ringBuffer.GetSampleCount() << " samples" << std::endl;
+                    }
+                }
+            }
+            else if (eventType == METransformDrainComplete) {
+                break;
+            }
         }
-        if (copyTexture) copyTexture->Release(); // 5. Nettoyage final
+        std::cout << "Capture terminee. RAM : " << ringBuffer.GetSampleCount() << " samples." << std::endl;
+
+        //garde le clip
+        ComPtr<IMFMediaType> pCurrentType;
+        if (SUCCEEDED(pEncoder->GetOutputCurrentType(0, &pCurrentType))) {
+            ringBuffer.SaveToFile(L"clip.mp4", pCurrentType.Get());
+        }
     }
 
     std::cout << "== CLEANUP ==" << std::endl;
-    sinkWriter->Finalize();
-    sinkWriter->Release();
+    if (pEncoder) pEncoder->Release();
     dxgiDeviceManager.deviceManager->Release();
     ShutdownMediaFoundation();
 }

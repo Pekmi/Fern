@@ -14,7 +14,7 @@ IDXGIOutputDuplication* getOutputDuplication(ID3D11Device* device, IDXGIOutput1*
 
 #pragma region capture
 
-IDXGIResource* getResource(IDXGIOutputDuplication* outputDuplication);
+IDXGIResource* getResource(IDXGIOutputDuplication* outputDuplication, UINT timeout = 0);
 
 
 #pragma region decodage

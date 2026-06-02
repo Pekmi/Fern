@@ -72,3 +72,5 @@ Testing/
 notes.txt
 .VSCodeCounter/
 *.mp4
+/*.bat
+output.txt
