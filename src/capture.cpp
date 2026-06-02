@@ -10,8 +10,8 @@
 #pragma region getters
 
 D3D11Context GetD3D11Device() {
-    ID3D11Device* device = nullptr;
-    ID3D11DeviceContext* deviceContext = nullptr;
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11DeviceContext> deviceContext;
     D3D_FEATURE_LEVEL featureLevel;
 
     //cree D3D11 device
@@ -31,11 +31,10 @@ D3D11Context GetD3D11Device() {
     );
 
     if (SUCCEEDED(hr) && device) {
-        ID3D11Multithread* pMultithread = nullptr;
-        hr = device->QueryInterface(__uuidof(ID3D11Multithread), (void**)&pMultithread);
+        ComPtr<ID3D11Multithread> pMultithread;
+        hr = device.As(&pMultithread);
         if (SUCCEEDED(hr) && pMultithread) {
             pMultithread->SetMultithreadProtected(TRUE);
-            pMultithread->Release();
         }
     }
 
@@ -44,18 +43,18 @@ D3D11Context GetD3D11Device() {
 }
 
 //factory
-IDXGIFactory1* getFactory1() {
-    IDXGIFactory1* factory = nullptr;
+ComPtr<IDXGIFactory1> getFactory1() {
+    ComPtr<IDXGIFactory1> factory;
     CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&factory);
     return factory;
 }
 
 //adapters
-std::vector<IDXGIAdapter1*> getAdapters1(IDXGIFactory1* factory) {
+std::vector<ComPtr<IDXGIAdapter1>> getAdapters1(IDXGIFactory1* factory) {
     int index = 0;
-    std::vector<IDXGIAdapter1*> adapters;
-    IDXGIAdapter1* adapter = nullptr;
-    while (factory->EnumAdapters1(index, &adapter) != DXGI_ERROR_NOT_FOUND) {
+    std::vector<ComPtr<IDXGIAdapter1>> adapters;
+    ComPtr<IDXGIAdapter1> adapter;
+    while (factory->EnumAdapters1(index, adapter.ReleaseAndGetAddressOf()) != DXGI_ERROR_NOT_FOUND) {
         adapters.push_back(adapter);
         index++;
     }
@@ -63,22 +62,23 @@ std::vector<IDXGIAdapter1*> getAdapters1(IDXGIFactory1* factory) {
 }
 
 //outputs
-std::vector<IDXGIOutput1*> getOutputs1(IDXGIAdapter1* adapter) {
+std::vector<ComPtr<IDXGIOutput1>> getOutputs1(IDXGIAdapter1* adapter) {
     int index = 0;
-    std::vector<IDXGIOutput1*> outputs;
-    IDXGIOutput* output = nullptr;
-    IDXGIOutput1* output1 = nullptr;
-    while (adapter->EnumOutputs(index, &output) != DXGI_ERROR_NOT_FOUND) {
-        output->QueryInterface(__uuidof(IDXGIOutput1), (void**)&output1);
-        outputs.push_back(output1);
+    std::vector<ComPtr<IDXGIOutput1>> outputs;
+    ComPtr<IDXGIOutput> output;
+    while (adapter->EnumOutputs(index, output.ReleaseAndGetAddressOf()) != DXGI_ERROR_NOT_FOUND) {
+        ComPtr<IDXGIOutput1> output1;
+        if (SUCCEEDED(output.As(&output1))) {
+            outputs.push_back(output1);
+        }
         index++;
     }
     return outputs;
 }
 
 //outputduplication
-IDXGIOutputDuplication* getOutputDuplication(ID3D11Device* device, IDXGIOutput1* output1) {
-    IDXGIOutputDuplication* outputDuplication = nullptr;
+ComPtr<IDXGIOutputDuplication> getOutputDuplication(ID3D11Device* device, IDXGIOutput1* output1) {
+    ComPtr<IDXGIOutputDuplication> outputDuplication;
     output1->DuplicateOutput(device, &outputDuplication);
     return outputDuplication;
 }
@@ -87,9 +87,9 @@ IDXGIOutputDuplication* getOutputDuplication(ID3D11Device* device, IDXGIOutput1*
 #pragma region capture 
 
 //resource (image)
-IDXGIResource* getResource(IDXGIOutputDuplication* outputDuplication, UINT timeout) {
+ComPtr<IDXGIResource> getResource(IDXGIOutputDuplication* outputDuplication, UINT timeout) {
     DXGI_OUTDUPL_FRAME_INFO frameInfo;
-    IDXGIResource* resource = nullptr;
+    ComPtr<IDXGIResource> resource;
     outputDuplication->AcquireNextFrame(timeout, &frameInfo, &resource);
     return resource;
 }
@@ -98,22 +98,18 @@ IDXGIResource* getResource(IDXGIOutputDuplication* outputDuplication, UINT timeo
 #pragma region decodage
 
 //converti la ressource en texture
-ID3D11Texture2D* resourceToTexture(IDXGIResource* resource) {
-    ID3D11Texture2D* texture = nullptr;
+ComPtr<ID3D11Texture2D> resourceToTexture(IDXGIResource* resource) {
+    ComPtr<ID3D11Texture2D> texture;
     resource->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&texture);
     return texture;
 }
 
 //crée une texture relai lisable pour cpu (staging texture)
-ID3D11Texture2D* createStagingTexture(ID3D11Device* device, ID3D11Texture2D* texture) {
-    ID3D11Texture2D* stagingTexture;
+ComPtr<ID3D11Texture2D> createStagingTexture(ID3D11Device* device, ID3D11Texture2D* texture) {
+    ComPtr<ID3D11Texture2D> stagingTexture;
 
-    UINT width = 0;
-    UINT height = 0;
     D3D11_TEXTURE2D_DESC desc; 
     texture->GetDesc(&desc);
-    width = desc.Width;
-    height = desc.Height;
 
     D3D11_TEXTURE2D_DESC stagingDesc = desc;
     stagingDesc.Usage = D3D11_USAGE_STAGING;
@@ -128,10 +124,9 @@ ID3D11Texture2D* createStagingTexture(ID3D11Device* device, ID3D11Texture2D* tex
 
 //lecture pixels
 void MapAndPrintPixel(ID3D11DeviceContext* deviceContext, ID3D11Texture2D* stagingTexture) {
-    ID3D11Texture2D* capturedTexture = nullptr;
     D3D11_MAPPED_SUBRESOURCE mapped;
     
-    deviceContext->CopyResource(stagingTexture, capturedTexture);
+    // CopyResource call removed because capturedTexture was null and uninitialized
     deviceContext->Map(stagingTexture, 0, D3D11_MAP_READ, 0, &mapped);
     deviceContext->Unmap(stagingTexture, 0);
 }
