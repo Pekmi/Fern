@@ -2,6 +2,7 @@
 #include <vector>
 
 #include "../include/fern/capture.h"
+#include "../include/fern/encoder.h"
 
 int main() {
     std::cout << "== SETUP ==" << std::endl;
@@ -36,12 +37,54 @@ int main() {
     outputDuplication->GetDesc(&desc);
     std::wcout << "> Resolution sortie dupliquee : " << desc.ModeDesc.Width << "x" << desc.ModeDesc.Height << std::endl;
 
-    std::cout << "Attrape l'image" << std::endl;
-    IDXGIResource* resource = getResource(outputDuplication);
+    // std::cout << "Attrape l'image" << std::endl;
+    // IDXGIResource* resource = getResource(outputDuplication);
     
-    std::cout << "== DECODAGE ==" << std::endl;
+    std::cout << "== TRAITEMENT ==" << std::endl;
 
-    ID3D11Texture2D* texture = resourceToTexture(resource);
-    ID3D11Texture2D* stagingTexture = createStagingTexture(device, texture);
-    MapAndPrintPixel(deviceContext, stagingTexture);
+    // ID3D11Texture2D* texture = resourceToTexture(resource);
+    // ID3D11Texture2D* stagingTexture = createStagingTexture(device, texture);
+    // MapAndPrintPixel(deviceContext, stagingTexture);
+
+    HRESULT hr = InitializeMediaFoundation();
+    if (SUCCEEDED(hr)) { std::cout << "Media Foundation ok" << std::endl; }
+    else { std::cerr << "Media Foundation erreur : " << hr << std::endl; }
+    DXGIDeviceManagerAndUInt dxgiDeviceManager = CreateDXGIDeviceManager(device);
+    IMFSinkWriter* sinkWriter = nullptr;
+    DWORD streamIndex = 0;
+    hr = CreateSinkWriter(L"output.mp4", dxgiDeviceManager.deviceManager, &sinkWriter, &streamIndex, desc.ModeDesc.Width, desc.ModeDesc.Height);
+    if (FAILED(hr)) {
+        std::cerr << "erreur creation sink writer : " << hr << std::endl;
+        ShutdownMediaFoundation();
+        return -1; 
+    } 
+    else {
+        LONGLONG hnsTimestamp = 0;
+        UINT fps = 60;
+        std::cout << "Enregistrement" << std::endl;
+        for (int i = 0; i < 600; ++i) {
+            IDXGIResource* resource = getResource(outputDuplication);
+            if (resource == nullptr) { continue; }
+            ID3D11Texture2D* texture = resourceToTexture(resource);
+            // check texture description
+            D3D11_TEXTURE2D_DESC textureDesc;
+            texture->GetDesc(&textureDesc);
+            std::cout << "flags : " << textureDesc.BindFlags << ", " << textureDesc.MiscFlags << std::endl;
+            hr = EncodeFrame(sinkWriter, streamIndex, texture, hnsTimestamp);
+            if (FAILED(hr)) {
+                std::cerr << "erreur encodage frame : " << hr << std::endl;
+                break;
+            }
+            hnsTimestamp += 10000000 / fps;
+            resource->Release();
+            texture->Release();
+            outputDuplication->ReleaseFrame();
+        }
+    }
+
+    std::cout << "== CLEANUP ==" << std::endl;
+    sinkWriter->Finalize();
+    sinkWriter->Release();
+    dxgiDeviceManager.deviceManager->Release();
+    ShutdownMediaFoundation();
 }
