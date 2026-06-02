@@ -4,6 +4,7 @@
 #include <vector>
 #include <synchapi.h>
 #include <mferror.h>
+#include <chrono>
 
 #include "../include/fern/capture.h"
 #include "../include/fern/encoder.h"
@@ -97,6 +98,7 @@ int main() {
         SetWaitableTimer(hTimer, &liDueTime, 0, NULL, NULL, FALSE);
 
         std::cout << "Capture en cours (600 frames)..." << std::endl;
+        auto start = std::chrono::high_resolution_clock::now();
         LONGLONG hnsTimestamp = 0;
         int framesProduced = 0;
 
@@ -146,7 +148,11 @@ int main() {
                 break;
             }
         }
+        auto end = std::chrono::high_resolution_clock::now();
+        std::chrono::duration<double> elapsed = end - start;
         std::cout << "Capture terminee. RAM : " << ringBuffer.GetSampleCount() << " samples." << std::endl;
+        std::cout << "Performance : " << elapsed.count() << "s pour 600 frames (cible 10s)." << std::endl;
+        std::cout << "FPS Moyen : " << 600.0 / elapsed.count() << std::endl;
 
         //garde le clip
         ComPtr<IMFMediaType> pCurrentType;
@@ -159,6 +165,15 @@ int main() {
 
     std::cout << "== CLEANUP ==" << std::endl;
     if (pEncoder) pEncoder->Release();
-    dxgiDeviceManager.deviceManager->Release();
+    if (dxgiDeviceManager.deviceManager) dxgiDeviceManager.deviceManager->Release();
+    
+    if (outputDuplication) outputDuplication->Release();
+    for (auto output : outputs) if (output) output->Release();
+    for (auto adapter : adapters) if (adapter) adapter->Release();
+    if (factory) factory->Release();
+
+    if (deviceContext) deviceContext->Release();
+    if (device) device->Release();
+
     ShutdownMediaFoundation();
 }
