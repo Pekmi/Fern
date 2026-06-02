@@ -62,24 +62,48 @@ int main() {
         LONGLONG hnsTimestamp = 0;
         UINT fps = 60;
         std::cout << "Enregistrement" << std::endl;
+
+        // 1. Créer la texture de copie UNE SEULE FOIS avant la boucle
+        ID3D11Texture2D* copyTexture = nullptr;
+        D3D11_TEXTURE2D_DESC copyDesc = {};
+        copyDesc.Width = desc.ModeDesc.Width;
+        copyDesc.Height = desc.ModeDesc.Height;
+        copyDesc.MipLevels = 1;
+        copyDesc.ArraySize = 1;
+        copyDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        copyDesc.SampleDesc.Count = 1;
+        copyDesc.Usage = D3D11_USAGE_DEFAULT;
+        copyDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        
+        device->CreateTexture2D(&copyDesc, nullptr, &copyTexture);
+
         for (int i = 0; i < 600; ++i) {
             IDXGIResource* resource = getResource(outputDuplication);
-            if (resource == nullptr) { continue; }
-            ID3D11Texture2D* texture = resourceToTexture(resource);
-            // check texture description
-            D3D11_TEXTURE2D_DESC textureDesc;
-            texture->GetDesc(&textureDesc);
-            std::cout << "flags : " << textureDesc.BindFlags << ", " << textureDesc.MiscFlags << std::endl;
-            hr = EncodeFrame(sinkWriter, streamIndex, texture, hnsTimestamp);
-            if (FAILED(hr)) {
-                std::cerr << "erreur encodage frame : " << hr << std::endl;
-                break;
+            if (resource == nullptr) {
+                hnsTimestamp += 10000000 / fps;
+                continue; 
             }
+            ID3D11Texture2D* texture = resourceToTexture(resource);
+            
+            // 2. Copier et encoder
+            if (copyTexture) {
+                deviceContext->CopyResource(copyTexture, texture);
+                hr = EncodeFrame(sinkWriter, streamIndex, copyTexture, hnsTimestamp);
+                
+                if (FAILED(hr)) {
+                    std::cerr << "erreur encodage frame : " << hr << std::endl;
+                    texture->Release();
+                    resource->Release();
+                    break;
+                }
+            }
+            
             hnsTimestamp += 10000000 / fps;
+            texture->Release(); // 3. Libérer la texture capturée
             resource->Release();
-            texture->Release();
-            outputDuplication->ReleaseFrame();
+            outputDuplication->ReleaseFrame(); // 4. Relâcher le verrou immédiatement
         }
+        if (copyTexture) copyTexture->Release(); // 5. Nettoyage final
     }
 
     std::cout << "== CLEANUP ==" << std::endl;

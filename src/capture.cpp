@@ -1,4 +1,5 @@
 #include <d3d11.h>
+#include <d3d11_4.h>
 #include <dxgi1_2.h>
 #include <iostream>
 #include <vector>
@@ -14,11 +15,13 @@ D3D11Context GetD3D11Device() {
     D3D_FEATURE_LEVEL featureLevel;
 
     // Create a D3D11 device
-    D3D11CreateDevice(
+    UINT creationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+
+    HRESULT hr = D3D11CreateDevice(
         nullptr,                    // Use default adapter
         D3D_DRIVER_TYPE_HARDWARE,   // Use hardware driver
         nullptr,                    // No software rasterizer
-        0,                          // Flags
+        creationFlags,              // Flags
         nullptr,                    // Feature levels array
         0,                          // Number of feature levels
         D3D11_SDK_VERSION,          // SDK version
@@ -26,6 +29,15 @@ D3D11Context GetD3D11Device() {
         &featureLevel,              // Output feature level
         &deviceContext              // Output context pointer (not needed here)
     );
+
+    if (SUCCEEDED(hr) && device) {
+        ID3D11Multithread* pMultithread = nullptr;
+        hr = device->QueryInterface(__uuidof(ID3D11Multithread), (void**)&pMultithread);
+        if (SUCCEEDED(hr) && pMultithread) {
+            pMultithread->SetMultithreadProtected(TRUE);
+            pMultithread->Release();
+        }
+    }
 
     D3D11Context result = {device, deviceContext};
     return result;

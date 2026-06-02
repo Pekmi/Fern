@@ -70,3 +70,5 @@ Testing/
 
 # perso
 notes.txt
+.VSCodeCounter/
+*.mp4

@@ -95,6 +95,11 @@ HRESULT EncodeFrame(IMFSinkWriter* pSinkWriter, DWORD streamIndex, ID3D11Texture
     IMFMediaBuffer* pBuffer = nullptr;
     hr = MFCreateDXGISurfaceBuffer(__uuidof(ID3D11Texture2D), pTexture, 0, FALSE, &pBuffer);
     if (FAILED(hr)) { return hr; }
+
+    D3D11_TEXTURE2D_DESC desc;
+    pTexture->GetDesc(&desc);
+    pBuffer->SetCurrentLength(desc.Width * desc.Height * 4);
+
     hr = pSample->AddBuffer(pBuffer);
     if (FAILED(hr)) { return hr; }
     pBuffer->Release();
