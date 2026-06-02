@@ -1,5 +1,8 @@
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #include <iostream>
 #include <vector>
+#include <synchapi.h>
 #include <mferror.h>
 
 #include "../include/fern/capture.h"
@@ -58,7 +61,7 @@ int main() {
         std::cout << "Encodeur hardware initialise avec succes" << std::endl;
         
         //cree tampon circulaire (30s)
-        RingBuffer ringBuffer(30LL * 10000000LL);
+        RingBuffer ringBuffer(30LL * HNS_PER_SEC);
 
         //gen d'events de l'encodeur
         ComPtr<IMFMediaEventGenerator> pEventGen;
@@ -82,6 +85,17 @@ int main() {
         pEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
         pEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
 
+        // Initialisation du timer pour 60 FPS
+        HANDLE hTimer = CreateWaitableTimerEx(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+        if (!hTimer) {
+            std::cerr << "Erreur creation timer : " << GetLastError() << std::endl;
+            return -1;
+        }
+
+        LARGE_INTEGER liDueTime;
+        liDueTime.QuadPart = -TICK_INTERVAL_HNS; // Démarre immédiatement (relatif)
+        SetWaitableTimer(hTimer, &liDueTime, 0, NULL, NULL, FALSE);
+
         std::cout << "Capture en cours (600 frames)..." << std::endl;
         LONGLONG hnsTimestamp = 0;
         int framesProduced = 0;
@@ -95,7 +109,14 @@ int main() {
             pEvent->GetType(&eventType);
 
             if (eventType == METransformNeedInput) {
-                //attrape une nouvelle image
+                // Attente du prochain tick
+                WaitForSingleObject(hTimer, INFINITE);
+
+                // Re-programmer le timer pour le prochain tick
+                liDueTime.QuadPart = -TICK_INTERVAL_HNS;
+                SetWaitableTimer(hTimer, &liDueTime, 0, NULL, NULL, FALSE);
+
+                // Attrape une nouvelle image
                 IDXGIResource* resource = getResource(outputDuplication);
                 
                 if (resource) {
@@ -105,9 +126,9 @@ int main() {
                     outputDuplication->ReleaseFrame();
                 } 
                 
-                //envoie toujours copyTexture (nouvelle ou ancienne)
+                // envoie toujours copyTexture (nouvelle ou ancienne)
                 if (SUCCEEDED(PushFrameToEncoder(pEncoder, copyTexture.Get(), hnsTimestamp))) {
-                    hnsTimestamp += 166666;
+                    hnsTimestamp += TICK_INTERVAL_HNS;
                     i++;
                 }
             }
@@ -132,6 +153,8 @@ int main() {
         if (SUCCEEDED(pEncoder->GetOutputCurrentType(0, &pCurrentType))) {
             ringBuffer.SaveToFile(L"clip.mp4", pCurrentType.Get());
         }
+
+        CloseHandle(hTimer);
     }
 
     std::cout << "== CLEANUP ==" << std::endl;
