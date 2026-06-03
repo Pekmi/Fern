@@ -5,12 +5,33 @@
 #include <synchapi.h>
 #include <mferror.h>
 #include <chrono>
+#include <thread>
 
 #include "../include/fern/capture.h"
 #include "../include/fern/encoder.h"
 #include "../include/fern/buffer.h"
+#include "../include/fern/ipc_server.h"
 
-int main() {
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLine, int nCmdShow) {
+
+    //console
+    AllocConsole();
+    FILE* fpOUT;
+    FILE* fpERR;
+    FILE* fpIN;
+    freopen_s(&fpOUT, "CONOUT$", "w", stdout);
+    freopen_s(&fpERR, "CONOUT$", "w", stderr);
+    freopen_s(&fpIN, "CONIN$", "r", stdin);
+    std::cout.clear();
+    std::cerr.clear();
+    std::cin.clear();
+
+    //init serveur IPC
+    extern std::atomic<bool> running;
+    extern std::atomic<bool> triggerSave;
+    std::thread ipcThread(RunIpcServer, std::ref(running), std::ref(triggerSave));
+    ipcThread.detach();
+
     HRESULT hr = InitializeMediaFoundation();
     if (FAILED(hr)) {
         std::cerr << "Media Foundation erreur d'initialisation : " << hr << std::endl;
@@ -90,7 +111,8 @@ int main() {
         
         std::cout << "Encodeur hardware initialise avec succes" << std::endl;
         
-        {
+        {//scope pour libérer les ressources avant shutdown
+
             //cree tampon circulaire (30s)
             RingBuffer ringBuffer(30LL * HNS_PER_SEC);
 
@@ -133,12 +155,23 @@ int main() {
             LONGLONG hnsTimestamp = 0;
             int framesProduced = 0;
 
-            for (int i = 0; i < 600; ) {
+            // for (int i = 0; i < 600; ) {
+            int i = 0;
+            while (running) {
+
+                if (triggerSave.exchange(false)) {
+                    std::cout << ">>> Trigger sauvegarde demandee IPC" << std::endl;
+                    ComPtr<IMFMediaType> pCurrentType;
+                    if (SUCCEEDED(pEncoder->GetOutputCurrentType(0, &pCurrentType))) {
+                        ringBuffer.SaveToFile(L"clip_triggered.mp4", pCurrentType.Get());
+                    }
+                }
+                
                 ComPtr<IMFMediaEvent> pEvent;
                 hr = pEventGen->GetEvent(0, &pEvent);
                 if (FAILED(hr)) {
-                    if (i >= 600) hr = S_OK;
-                    break;
+                    // std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    continue;
                 }
 
                 MediaEventType eventType;
@@ -177,6 +210,8 @@ int main() {
                 else if (eventType == METransformDrainComplete) {
                     break;
                 }
+
+                i++;
             }
             auto end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = end - start;

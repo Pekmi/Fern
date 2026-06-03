@@ -23,14 +23,24 @@
             <KeyboardAccelerator Key="F11" Invoked="KeyboardAccelerator_Invoked" />
         </NavigationView.KeyboardAccelerators>
         <NavigationView.PaneHeader>
-            <Button x:Name="FullScreenButton" 
-                    Click="FullScreenButton_Click"
-                    ToolTipService.ToolTip="Plein Écran (F11)"
-                    Background="Transparent" 
-                    BorderBrush="Transparent"
-                    Width="40" Height="40" Margin="4,4,0,0">
-                <FontIcon Glyph="&#xE740;" FontSize="16"/>
-            </Button>
+            <StackPanel Orientation="Horizontal">
+                <Button x:Name="FullScreenButton" 
+                        Click="FullScreenButton_Click"
+                        ToolTipService.ToolTip="Plein Écran (F11)"
+                        Background="Transparent" 
+                        BorderBrush="Transparent"
+                        Width="40" Height="40" Margin="4,4,0,0">
+                    <FontIcon Glyph="&#xE740;" FontSize="16"/>
+                </Button>
+                <Button x:Name="CaptureButton" 
+                        Click="CaptureButton_Click"
+                        ToolTipService.ToolTip="Capturer Clip (Daemon)"
+                        Background="Transparent" 
+                        BorderBrush="Transparent"
+                        Width="40" Height="40" Margin="4,4,0,0">
+                    <FontIcon Glyph="&#xE7AD;" FontSize="16"/>
+                </Button>
+            </StackPanel>
         </NavigationView.PaneHeader>
         <NavigationView.Transitions>
             <TransitionCollection>

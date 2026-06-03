@@ -6,10 +6,13 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using System;
+using System.Text;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Pipes;
 using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Threading.Tasks;
 using Windows.Foundation;
 using Windows.Foundation.Collections;
 
@@ -35,6 +38,32 @@ namespace FernUI
             var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hWnd);
             _appWindow = Microsoft.UI.Windowing.AppWindow.GetFromWindowId(windowId);
             _appWindow.Resize(new Windows.Graphics.SizeInt32 { Width = 1200, Height = 800 });
+        }
+
+        private async void CaptureButton_Click(object sender, RoutedEventArgs e)
+        {
+            await SendSaveCommandAsync();
+        }
+
+        public async Task SendSaveCommandAsync()
+        {
+            try
+            {
+                using (var pipeClient = new NamedPipeClientStream(".", "FernPipe", PipeDirection.Out))
+                {
+                    await pipeClient.ConnectAsync(1000);
+
+                    using (var writer = new StreamWriter(pipeClient))
+                    {
+                        writer.AutoFlush = true;
+                        await writer.WriteAsync("SAVE");
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // Silently fail for now, or log if needed
+            }
         }
 
         private void FullScreenButton_Click(object sender, RoutedEventArgs e)
