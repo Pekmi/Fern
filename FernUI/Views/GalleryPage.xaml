@@ -1,0 +1,234 @@
+<Page
+    x:Class="FernUI.Views.GalleryPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:FernUI.Views"
+    xmlns:models="using:FernUI.Models"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    KeyDown="Page_KeyDown">
+
+    <Page.Resources>
+        <DataTemplate x:Key="ClipCardTemplate" x:DataType="models:ClipModel">
+            <Grid x:Name="CardRoot" 
+                  Margin="0,0,0,16" 
+                  PointerEntered="CardRoot_PointerEntered" 
+                  PointerExited="CardRoot_PointerExited"
+                  Tapped="CardRoot_Tapped"
+                  IsTabStop="True">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Indicateur de sélection (clavier) -->
+                <Border x:Name="SelectionBorder" 
+                        Grid.RowSpan="2"
+                        Margin="-6"
+                        BorderBrush="{ThemeResource SystemControlHighlightAccentBrush}" 
+                        BorderThickness="3" 
+                        CornerRadius="16" 
+                        Opacity="0"/>
+
+                <!-- Zone Media -->
+                <Border CornerRadius="12" Height="{x:Bind CardHeight}" Background="{ThemeResource LayerFillColorDefaultBrush}">
+                    <Grid>
+                        <!-- Image Statique -->
+                        <Grid Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}">
+                            <FontIcon Glyph="{x:Bind ThumbnailIcon}" FontSize="32" Opacity="0.2"/>
+                        </Grid>
+                        
+                        <!-- Player Video -->
+                        <MediaPlayerElement x:Name="HoverPlayer" 
+                                            AreTransportControlsEnabled="False" 
+                                            AutoPlay="False"
+                                            Source="{x:Bind VideoUrl}"
+                                            Opacity="0"
+                                            Stretch="UniformToFill">
+                            <MediaPlayerElement.Transitions>
+                                <TransitionCollection>
+                                    <EntranceThemeTransition />
+                                </TransitionCollection>
+                            </MediaPlayerElement.Transitions>
+                        </MediaPlayerElement>
+
+                        <!-- CORRECTIF BADGE DURÉE -->
+                        <Border x:Name="DurationBadge" 
+                                Visibility="{x:Bind DurationVisibility}"
+                                VerticalAlignment="Bottom" HorizontalAlignment="Right" 
+                                Margin="8" Background="#80000000" CornerRadius="4" Padding="6,2">
+                            <TextBlock Text="{x:Bind Duration}" Foreground="White" FontSize="11" FontWeight="Medium"/>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <!-- Infos -->
+                <StackPanel Grid.Row="1" Margin="4,12,4,0">
+                    <TextBlock Text="{x:Bind Title}" Style="{ThemeResource BodyStrongTextBlockStyle}" MaxLines="2" TextTrimming="CharacterEllipsis"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                        <Border Background="{ThemeResource SystemControlBackgroundAccentBrush}" CornerRadius="4" Padding="6,1" Margin="0,0,8,0">
+                            <TextBlock Text="{x:Bind Game}" Foreground="White" FontSize="10" FontWeight="Bold"/>
+                        </Border>
+                        <TextBlock Text="{x:Bind Date}" Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </StackPanel>
+                </StackPanel>
+            </Grid>
+        </DataTemplate>
+    </Page.Resources>
+
+    <ScrollViewer Padding="32">
+        <StackPanel>
+            <StackPanel.ChildrenTransitions>
+                <TransitionCollection>
+                    <EntranceThemeTransition FromVerticalOffset="100" />
+                </TransitionCollection>
+            </StackPanel.ChildrenTransitions>
+            
+            <!-- Header -->
+            <TextBlock Text="Ma Galerie" Style="{ThemeResource TitleTextBlockStyle}" FontWeight="Bold" Margin="0,0,0,24"/>
+
+            <!-- BANDEAU DE CONTRÔLE (80% Recherche / 20% Date) -->
+            <Grid ColumnSpacing="12" Margin="0,0,0,24">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="8*"/>
+                    <ColumnDefinition Width="2*"/>
+                </Grid.ColumnDefinitions>
+
+                <AutoSuggestBox x:Name="SearchBox" 
+                                QueryIcon="Find" 
+                                Height="32"
+                                FontSize="16"
+                                FontWeight="Light"
+                                VerticalAlignment="Center"
+                                TextChanged="SearchBox_TextChanged"
+                                QuerySubmitted="SearchBox_QuerySubmitted"/>
+
+                <Button Grid.Column="1" 
+                        x:Name="DateFilterButton"
+                        Content="Date" 
+                        Click="DateFilterButton_Click"
+                        Height="32"
+                        HorizontalAlignment="Stretch"
+                        VerticalAlignment="Center"
+                        Style="{StaticResource AccentButtonStyle}">
+                    <Button.KeyboardAccelerators>
+                        <KeyboardAccelerator Key="D" Modifiers="Control"/>
+                    </Button.KeyboardAccelerators>
+                </Button>
+            </Grid>
+
+            <Grid x:Name="TimelinePanel" Height="0" Opacity="0" Margin="0,0,0,0">
+                <Grid.Resources>
+                    <Storyboard x:Name="ShowTimelineStoryboard">
+                        <DoubleAnimation Storyboard.TargetName="TimelinePanel" 
+                                         Storyboard.TargetProperty="Height" 
+                                         To="240" 
+                                         Duration="0:0:0.4"
+                                         EnableDependentAnimation="True">
+                            <DoubleAnimation.EasingFunction>
+                                <CubicEase EasingMode="EaseOut"/>
+                            </DoubleAnimation.EasingFunction>
+                        </DoubleAnimation>
+                        <DoubleAnimation Storyboard.TargetName="TimelinePanel" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.3"/>
+                    </Storyboard>
+                    <Storyboard x:Name="HideTimelineStoryboard">
+                        <DoubleAnimation Storyboard.TargetName="TimelinePanel" 
+                                         Storyboard.TargetProperty="Height" 
+                                         To="0" 
+                                         Duration="0:0:0.3"
+                                         EnableDependentAnimation="True">
+                            <DoubleAnimation.EasingFunction>
+                                <CubicEase EasingMode="EaseIn"/>
+                            </DoubleAnimation.EasingFunction>
+                        </DoubleAnimation>
+                        <DoubleAnimation Storyboard.TargetName="TimelinePanel" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.2"/>
+                    </Storyboard>
+                </Grid.Resources>
+
+                <Border Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="12" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" Margin="0,0,0,24" Padding="32,24">
+                    <Grid>
+                        <!-- Zone de courbe dynamique (Sera tracée en code-behind) -->
+                        <Canvas x:Name="GraphCanvas" Height="100" VerticalAlignment="Top" Margin="40,0" Opacity="1"/>
+
+                        <!-- Timeline (Axe) -->
+                        <Grid x:Name="TimelineTrack" Height="100" VerticalAlignment="Bottom" Margin="20,0">
+                            <!-- Barre de fond -->
+                            <Rectangle Height="2" Fill="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center"/>
+                            
+                            <!-- Zone de sélection colorée et draggable -->
+                            <Grid x:Name="SelectedRangeContainer"
+                                  Height="80"
+                                  VerticalAlignment="Center"
+                                  HorizontalAlignment="Left"
+                                  Background="Transparent"
+                                  PointerPressed="RangeBar_PointerPressed"
+                                  PointerMoved="RangeBar_PointerMoved"
+                                  PointerReleased="RangeBar_PointerReleased">
+                                <Rectangle Height="4" Fill="{ThemeResource SystemControlHighlightAccentBrush}" VerticalAlignment="Center"/>
+                            </Grid>
+                            
+                            <Canvas x:Name="TimelineCanvas">
+                                <!-- Point Début -->
+                                <Grid x:Name="StartHandle" Canvas.Left="0" Canvas.Top="30" 
+                                      PointerPressed="Handle_PointerPressed" 
+                                      PointerMoved="Handle_PointerMoved" 
+                                      PointerReleased="Handle_PointerReleased"
+                                      Background="Transparent" Width="40" Height="40">
+                                    <Ellipse Width="16" Height="16" Fill="White" Stroke="{ThemeResource SystemControlHighlightAccentBrush}" StrokeThickness="3" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    <TextBlock x:Name="StartDateText" Text="Début" FontSize="10" Margin="0,40,0,0" HorizontalAlignment="Center" FontWeight="SemiBold"/>
+                                </Grid>
+
+                                <!-- Point Fin -->
+                                <Grid x:Name="EndHandle" Canvas.Left="800" Canvas.Top="30" 
+                                      PointerPressed="Handle_PointerPressed" 
+                                      PointerMoved="Handle_PointerMoved" 
+                                      PointerReleased="Handle_PointerReleased"
+                                      Background="Transparent" Width="40" Height="40">
+                                    <Ellipse Width="16" Height="16" Fill="White" Stroke="{ThemeResource SystemControlHighlightAccentBrush}" StrokeThickness="3" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    <TextBlock x:Name="EndDateText" Text="Fin" FontSize="10" Margin="0,40,0,0" HorizontalAlignment="Center" FontWeight="SemiBold"/>
+                                </Grid>
+                            </Canvas>
+                        </Grid>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <!-- GRILLE MASONRY -->
+            <Grid ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel x:Name="Column0" Grid.Column="0">
+                    <StackPanel.ChildrenTransitions>
+                        <TransitionCollection>
+                            <AddDeleteThemeTransition />
+                            <EntranceThemeTransition FromVerticalOffset="40" />
+                        </TransitionCollection>
+                    </StackPanel.ChildrenTransitions>
+                </StackPanel>
+                
+                <StackPanel x:Name="Column1" Grid.Column="1">
+                    <StackPanel.ChildrenTransitions>
+                        <TransitionCollection>
+                            <AddDeleteThemeTransition />
+                            <EntranceThemeTransition FromVerticalOffset="60" />
+                        </TransitionCollection>
+                    </StackPanel.ChildrenTransitions>
+                </StackPanel>
+                
+                <StackPanel x:Name="Column2" Grid.Column="2">
+                    <StackPanel.ChildrenTransitions>
+                        <TransitionCollection>
+                            <AddDeleteThemeTransition />
+                            <EntranceThemeTransition FromVerticalOffset="80" />
+                        </TransitionCollection>
+                    </StackPanel.ChildrenTransitions>
+                </StackPanel>
+            </Grid>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

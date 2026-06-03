@@ -1,0 +1,121 @@
+<Page
+    x:Class="FernUI.Views.StudioPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:FernUI.Views"
+    xmlns:models="using:FernUI.Models"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Grid Padding="32">
+        <Grid.ChildrenTransitions>
+            <TransitionCollection>
+                <EntranceThemeTransition FromHorizontalOffset="100" />
+            </TransitionCollection>
+        </Grid.ChildrenTransitions>
+        
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,24">
+            <Button x:Name="BackButton" Click="BackButton_Click" 
+                    Style="{ThemeResource NavigationBackButtonNormalStyle}" 
+                    ToolTipService.ToolTip="Retour à la Galerie"
+                    Margin="0,0,16,0"/>
+            <TextBlock x:Name="ClipTitleTextBlock" Text="Nom du Clip" 
+                       Style="{ThemeResource TitleTextBlockStyle}" FontWeight="Bold"/>
+        </StackPanel>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*"/>
+                <ColumnDefinition Width="1*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- COLONNE GAUCHE : Lecteur Vidéo -->
+            <Grid Grid.Column="0" Margin="0,0,24,0">
+                <Border Background="Black" CornerRadius="12" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                    <Grid>
+                        <!-- Placeholder Lecteur -->
+                        <FontIcon Glyph="\uE714" Foreground="White" Opacity="0.1" FontSize="72"/>
+                        <TextBlock Text="Aperçu Vidéo" VerticalAlignment="Center" HorizontalAlignment="Center" Foreground="White" Opacity="0.5" Margin="0,100,0,0"/>
+                        
+                        <!-- Barre de contrôle bidon -->
+                        <Border VerticalAlignment="Bottom" Height="60" Background="#99000000" CornerRadius="0,0,12,12" Padding="20,0">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <FontIcon Glyph="\uE768" Foreground="White" FontSize="20" Margin="0,0,16,0"/>
+                                <Slider Grid.Column="1" Value="35" Minimum="0" Maximum="100" VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="2" Text="00:10 / 00:30" Foreground="White" VerticalAlignment="Center" Margin="16,0,0,0" FontSize="12"/>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <!-- COLONNE DROITE : Mixage & Infos -->
+            <Grid Grid.Column="1">
+                <Border Background="{ThemeResource LayerFillColorDefaultBrush}" 
+                        CornerRadius="12" Padding="24" 
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" 
+                        BorderThickness="1"
+                        VerticalAlignment="Stretch">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <StackPanel Grid.Row="0">
+                            <TextBlock Text="Informations" Style="{ThemeResource SubtitleTextBlockStyle}" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,24">
+                                <Border Background="{ThemeResource SystemControlBackgroundAccentBrush}" CornerRadius="4" Padding="8,2" Margin="0,0,12,0">
+                                    <TextBlock x:Name="GameBadge" Text="JEU" Foreground="White" FontSize="11" FontWeight="Bold"/>
+                                </Border>
+                                <TextBlock x:Name="DurationText" Text="00:00" Style="{ThemeResource CaptionTextBlockStyle}" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock Text="Studio Audio" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,0,0,16"/>
+                        </StackPanel>
+                        
+                        <!-- Console de Mixage -->
+                        <ListView x:Name="AudioTracksListView" Grid.Row="1" SelectionMode="None" VerticalAlignment="Top">
+                            <ListView.ItemTemplate>
+                                <DataTemplate x:DataType="models:AudioTrack">
+                                    <Grid Margin="0,8">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <FontIcon Glyph="{x:Bind Icon}" Margin="0,0,16,0" Grid.RowSpan="2" VerticalAlignment="Center" FontSize="20" Opacity="0.7"/>
+                                        <TextBlock Text="{x:Bind Name}" Grid.Column="1" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                        <Slider Grid.Row="1" Grid.Column="1" Value="{x:Bind Volume, Mode=TwoWay}" Minimum="0" Maximum="100" Margin="0,-4,0,0"/>
+                                        <ProgressBar Grid.Row="1" Grid.Column="1" Value="{x:Bind PeakLevel}" VerticalAlignment="Bottom" Height="2" Margin="0,0,0,4" Foreground="{ThemeResource SystemControlHighlightAccentBrush}" Background="Transparent"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+
+                        <StackPanel Grid.Row="2" Margin="0,24,0,0">
+                            <Button Content="Exporter le clip" Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Stretch" Padding="0,12" Margin="0,0,0,12"/>
+                            <Button Content="Générer un lien Cloud" HorizontalAlignment="Stretch" Padding="0,12"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+        </Grid>
+    </Grid>
+</Page>

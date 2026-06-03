@@ -1,0 +1,108 @@
+<Page
+    x:Class="FernUI.Views.SettingsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:FernUI.Views"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <Page.Resources>
+        <local:StringFormatConverter x:Key="StringFormatConverter"/>
+    </Page.Resources>
+
+    <ScrollViewer Padding="32">
+        <Grid HorizontalAlignment="Stretch" ColumnSpacing="24" RowSpacing="24">
+            <Grid.ChildrenTransitions>
+                <TransitionCollection>
+                    <EntranceThemeTransition FromVerticalOffset="50" />
+                </TransitionCollection>
+            </Grid.ChildrenTransitions>
+            
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.5*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <!-- TITRE -->
+            <TextBlock Text="Paramètres" Style="{ThemeResource TitleTextBlockStyle}" FontWeight="Bold" Grid.ColumnSpan="2" Margin="0,0,0,8"/>
+
+            <!-- SECTION MOTEUR VIDÉO (Colonne Gauche, Haute) -->
+            <StackPanel Grid.Row="1" Grid.Column="0" Grid.RowSpan="2">
+                <TextBlock Text="Moteur Vidéo &amp; Audio" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,0,0,12"/>
+                <Border Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="12" Padding="24" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                    <StackPanel Spacing="24">
+                        <StackPanel>
+                            <Grid>
+                                <TextBlock Text="Durée du tampon circulaire" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding ElementName=BufferSlider, Path=Value, Converter={StaticResource StringFormatConverter}, ConverterParameter='\{0\}s'}" HorizontalAlignment="Right" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </Grid>
+                            <Slider x:Name="BufferSlider" Minimum="15" Maximum="120" StepFrequency="5" TickFrequency="5" Value="30"/>
+                            <TextBlock Text="Définit la longueur de la prise de vue en mémoire vive." Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+
+                        <StackPanel>
+                            <TextBlock Text="Fréquence d'images (FPS)" Margin="0,0,0,8"/>
+                            <ComboBox SelectedIndex="1" HorizontalAlignment="Stretch">
+                                <ComboBoxItem Content="30 FPS (Économique)"/>
+                                <ComboBoxItem Content="60 FPS (Fluide)"/>
+                            </ComboBox>
+                        </StackPanel>
+
+                        <StackPanel>
+                            <Grid>
+                                <TextBlock Text="Bitrate de l'encodeur (Mbps)" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding ElementName=BitrateSlider, Path=Value, Converter={StaticResource StringFormatConverter}, ConverterParameter='\{0\} Mbps'}" HorizontalAlignment="Right" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </Grid>
+                            <Slider x:Name="BitrateSlider" Minimum="2" Maximum="50" Value="15"/>
+                            <TextBlock Text="Un bitrate plus élevé augmente la qualité mais aussi la taille des fichiers." Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <!-- SECTION RACCOURCIS & CHEMINS (Colonne Droite, Haut) -->
+            <StackPanel Grid.Row="1" Grid.Column="1">
+                <TextBlock Text="Raccourcis &amp; Chemins" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,0,0,12"/>
+                <Border Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="12" Padding="24" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                    <StackPanel Spacing="24">
+                        <StackPanel>
+                            <TextBlock Text="Raccourci Global" Margin="0,0,0,8"/>
+                            <TextBox Text="Ctrl + Shift + C" PlaceholderText="Capture..."/>
+                        </StackPanel>
+
+                        <StackPanel>
+                            <TextBlock Text="Stockage" Margin="0,0,0,8"/>
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="PathTextBox" Text="C:\Videos\Fern" IsReadOnly="True" VerticalAlignment="Center" FontSize="12"/>
+                                <Button Grid.Column="1" Padding="8,4" Click="BrowseButton_Click">
+                                    <FontIcon Glyph="&#xE838;" FontSize="14"/>
+                                </Button>
+                            </Grid>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <!-- SECTION IA (Colonne Droite, Milieu) -->
+            <StackPanel Grid.Row="2" Grid.Column="1" VerticalAlignment="Top">
+                <TextBlock Text="Intelligence Artificielle" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,0,0,12"/>
+                <Border Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="12" Padding="24" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                    <StackPanel Spacing="12">
+                        <ToggleSwitch Header="Tri Auto (Modèle Local)" IsOn="True"/>
+                        <TextBlock Text="Analyse les clips pour détecter les moments clés automatiquement." Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Grid>
+    </ScrollViewer>
+</Page>

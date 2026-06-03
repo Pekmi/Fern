@@ -74,3 +74,12 @@ notes.txt
 *.mp4
 /*.bat
 output.txt
+bin/
+obj/
+#j'ai créé dans /fernui un projet winui c#, je veux ignorer les fichiers générés par visual studio
+*.csproj.user
+*.suo
+*.user
+*.userosscache
+.vs/
+properties/
