@@ -30,7 +30,7 @@ void ShutdownMediaFoundation() {
 
 //cree DXGI device manager
 DXGIDeviceManagerAndUInt CreateDXGIDeviceManager(ID3D11Device* device) {
-    IMFDXGIDeviceManager* deviceManager = nullptr;
+    ComPtr<IMFDXGIDeviceManager> deviceManager;
     UINT resetToken = 0;
     HRESULT hr = MFCreateDXGIDeviceManager(&resetToken, &deviceManager);
     if (FAILED(hr)) {
@@ -42,7 +42,7 @@ DXGIDeviceManagerAndUInt CreateDXGIDeviceManager(ID3D11Device* device) {
 }
 
 //cherche et configure l'encodeur hardware
-HRESULT InitializeHardwareEncoder(IMFDXGIDeviceManager* pDeviceManager, IMFTransform** ppEncoder, UINT width, UINT height) {
+HRESULT InitializeHardwareEncoder(IMFDXGIDeviceManager* pDeviceManager, ComPtr<IMFTransform>& pEncoder, UINT width, UINT height) {
     HRESULT hr = S_OK;
     UINT32 count = 0;
     IMFActivate** ppActivate = nullptr;
@@ -63,7 +63,6 @@ HRESULT InitializeHardwareEncoder(IMFDXGIDeviceManager* pDeviceManager, IMFTrans
         CoTaskMemFree(pszName);
     }
 
-    ComPtr<IMFTransform> pEncoder;
     hr = ppActivate[0]->ActivateObject(IID_PPV_ARGS(&pEncoder));
     
     //cleanup des activations
@@ -93,7 +92,7 @@ HRESULT InitializeHardwareEncoder(IMFDXGIDeviceManager* pDeviceManager, IMFTrans
     pOutputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
     pOutputType->SetUINT32(MF_MT_AVG_BITRATE, 10 * 1024 * 1024);
     MFSetAttributeSize(pOutputType.Get(), MF_MT_FRAME_SIZE, width, height);
-    MFSetAttributeRatio(pOutputType.Get(), MF_MT_FRAME_RATE, 60, 1);
+    MFSetAttributeRatio(pOutputType.Get(), MF_MT_FRAME_RATE, TARGET_FPS, 1);
     pOutputType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
     pOutputType->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main);
 
@@ -122,7 +121,6 @@ HRESULT InitializeHardwareEncoder(IMFDXGIDeviceManager* pDeviceManager, IMFTrans
         return hr;
     }
 
-    *ppEncoder = pEncoder.Detach();
     return S_OK;
 }
 
@@ -143,14 +141,14 @@ HRESULT PushFrameToEncoder(IMFTransform* pEncoder, ID3D11Texture2D* pTexture, LO
     if (FAILED(hr)) return hr;
 
     pSample->SetSampleTime(hnsTimestamp);
-    pSample->SetSampleDuration(166666); 
+    pSample->SetSampleDuration(TICK_INTERVAL_HNS); 
 
     hr = pEncoder->ProcessInput(0, pSample.Get(), 0);
     return hr;
 }
 
 //recup données compressées
-HRESULT PullSampleFromEncoder(IMFTransform* pEncoder, IMFSample** ppSample) {
+HRESULT PullSampleFromEncoder(IMFTransform* pEncoder, ComPtr<IMFSample>& pSample) {
     MFT_OUTPUT_DATA_BUFFER outputBuffer = {};
     outputBuffer.dwStreamID = 0;
     outputBuffer.pSample = nullptr;
@@ -174,7 +172,7 @@ HRESULT PullSampleFromEncoder(IMFTransform* pEncoder, IMFSample** ppSample) {
     }
 
     if (hr == S_OK) {
-        *ppSample = outputBuffer.pSample;
+        pSample.Attach(outputBuffer.pSample);
         if (outputBuffer.pEvents) outputBuffer.pEvents->Release();
     } else {
         if (hr != MF_E_TRANSFORM_NEED_MORE_INPUT) {
