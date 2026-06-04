@@ -2,9 +2,28 @@
 #include <shlobj.h>
 #include <windows.h>
 #include <iostream>
+#include <algorithm>
+#include <cwctype>
 
 #include "../include/fern/settings.h"
 
+namespace {
+std::wstring ToLower(std::wstring value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](wchar_t c) {
+        return static_cast<wchar_t>(towlower(c));
+    });
+    return value;
+}
+
+std::filesystem::path EnsureFernLeaf(std::filesystem::path path) {
+    if (path.empty()) return path;
+
+    if (ToLower(path.filename().wstring()) != L"fern") {
+        path /= L"Fern";
+    }
+    return path;
+}
+}
 
 std::filesystem::path GetKnownFolder(REFKNOWNFOLDERID rfid) {
     wchar_t* path = nullptr;
@@ -30,21 +49,26 @@ std::filesystem::path Settings::GetSettingsPath() {
     return L"settings.txt";
 }
 
-void Settings::Load() {
+void Settings::Load(bool log) {
     // 1. Définir le chemin par défaut vers Vidéos/Fern dynamiquement
     auto videoPath = GetKnownFolder(FOLDERID_Videos);
     if (!videoPath.empty()) {
-        storagePath = (videoPath / L"Fern").wstring();
+        storagePath = EnsureFernLeaf(videoPath).wstring();
     } else {
         storagePath = L"C:\\Videos\\Fern"; 
     }
+    hotkey = L"Alt+Shift+F9";
 
     // 2. Tenter de charger le fichier
     auto path = GetSettingsPath();
-    std::wcout << L"SETTINGS: Tentative de chargement depuis " << path.wstring() << std::endl;
+    if (log) {
+        std::wcout << L"SETTINGS: Tentative de chargement depuis " << path.wstring() << std::endl;
+    }
 
     if (!std::filesystem::exists(path)) {
-        std::wcout << L"SETTINGS: Fichier absent, creation avec valeurs par defaut." << std::endl;
+        if (log) {
+            std::wcout << L"SETTINGS: Fichier absent, creation avec valeurs par defaut." << std::endl;
+        }
         Save();
         return;
     }
@@ -56,6 +80,8 @@ void Settings::Load() {
     }
 
     std::wstring line;
+    bool sawHotkey = false;
+    std::wstring loadedStoragePath = storagePath;
     while (std::getline(file, line)) {
         size_t pos = line.find(L'=');
         if (pos != std::wstring::npos) {
@@ -68,13 +94,31 @@ void Settings::Load() {
                 if (key == L"BufferDuration") bufferDuration = std::stoi(value);
                 else if (key == L"FPS") fps = std::stoi(value);
                 else if (key == L"Bitrate") bitrate = std::stoi(value);
-                else if (key == L"StoragePath") storagePath = value;
+                else if (key == L"StoragePath") {
+                    storagePath = value;
+                    loadedStoragePath = value;
+                }
+                else if (key == L"Hotkey") {
+                    hotkey = value;
+                    sawHotkey = true;
+                }
             } catch (...) {
                 std::wcerr << L"SETTINGS: Erreur de parsing pour " << key << std::endl;
             }
         }
     }
-    std::wcout << L"SETTINGS: Charger. StoragePath=" << storagePath << std::endl;
+
+    storagePath = EnsureFernLeaf(storagePath).wstring();
+    if (hotkey.empty()) hotkey = L"Alt+Shift+F9";
+
+    if (!sawHotkey || ToLower(loadedStoragePath) != ToLower(storagePath)) {
+        Save();
+    }
+
+    if (log) {
+        std::wcout << L"SETTINGS: Charger. StoragePath=" << storagePath
+                   << L" Hotkey=" << hotkey << std::endl;
+    }
 }
 
 void Settings::Save() {
@@ -85,7 +129,8 @@ void Settings::Save() {
         file << L"BufferDuration=" << bufferDuration << L"\n";
         file << L"FPS=" << fps << L"\n";
         file << L"Bitrate=" << bitrate << L"\n";
-        file << L"StoragePath=" << storagePath << L"\n";
+        file << L"StoragePath=" << EnsureFernLeaf(storagePath).wstring() << L"\n";
+        file << L"Hotkey=" << (hotkey.empty() ? L"Alt+Shift+F9" : hotkey) << L"\n";
         file.close();
     } else {
         std::wcerr << L"SETTINGS ERROR: Impossible d'ouvrir en ecriture: " << path.wstring() << std::endl;

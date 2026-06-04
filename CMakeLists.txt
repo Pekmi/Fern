@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_executable(Fern WIN32 
     src/main.cpp 
     src/clock.cpp
+    src/capture_feedback.cpp
     src/capture_session.cpp
     src/capture.cpp
     src/encoder.cpp
@@ -18,6 +19,7 @@ add_executable(Fern WIN32
     src/replay_export.cpp
     src/isolatedAudioCapture.cpp
     include/fern/clock.h
+    include/fern/capture_feedback.h
     include/fern/capture_session.h
     include/fern/capture.h
     include/fern/encoder.h
@@ -29,4 +31,4 @@ add_executable(Fern WIN32
     include/fern/replay_export.h
     include/fern/isolatedAudioCapture.h)
 
-target_link_libraries(Fern d3d11 dxgi mfplat mfuuid mfreadwrite mmdevapi RuntimeObject shell32 ole32 winmm)
+target_link_libraries(Fern d3d11 dxgi mfplat mfuuid mfreadwrite mmdevapi RuntimeObject shell32 ole32 winmm user32 gdi32)

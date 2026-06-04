@@ -7,8 +7,9 @@ struct Settings {
     int fps = 60;
     int bitrate = 15;
     std::wstring storagePath = L"C:\\Videos\\Fern";
+    std::wstring hotkey = L"Alt+Shift+F9";
 
-    void Load();
+    void Load(bool log = true);
     void Save();
 private:
     std::filesystem::path GetSettingsPath();

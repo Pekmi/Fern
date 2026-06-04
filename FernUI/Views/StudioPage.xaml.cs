@@ -9,7 +9,7 @@ namespace FernUI.Views
     public sealed partial class StudioPage : Page
     {
         public ObservableCollection<AudioTrack> AudioTracks { get; set; }
-        private ClipModel _selectedClip;
+        private ClipModel? _selectedClip;
 
         public StudioPage()
         {

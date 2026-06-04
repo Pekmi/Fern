@@ -4,6 +4,7 @@
 
 #include <mfapi.h>
 #include <mferror.h>
+#include <mfidl.h>
 #include <mfreadwrite.h>
 #include <windows.h>
 #include <algorithm>

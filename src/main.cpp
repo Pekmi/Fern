@@ -5,7 +5,6 @@
 
 #include <windows.h>
 #include <timeapi.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -18,6 +17,7 @@
 #include "../include/fern/hotkey.h"
 #include "../include/fern/ipc_server.h"
 #include "../include/fern/settings.h"
+
 
 namespace {
 

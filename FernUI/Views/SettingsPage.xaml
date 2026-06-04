@@ -74,7 +74,10 @@
                     <StackPanel Spacing="24">
                         <StackPanel>
                             <TextBlock Text="Raccourci Global" Margin="0,0,0,8"/>
-                            <TextBox Text="Ctrl + Shift + C" PlaceholderText="Capture..."/>
+                            <TextBox x:Name="HotkeyTextBox"
+                                     IsReadOnly="True"
+                                     PlaceholderText="Appuyez sur un raccourci"
+                                     KeyDown="HotkeyTextBox_KeyDown"/>
                         </StackPanel>
 
                         <StackPanel>

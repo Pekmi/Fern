@@ -6,6 +6,7 @@
 
 #include "../include/fern/buffer.h"
 #include "../include/fern/capture.h"
+#include "../include/fern/capture_feedback.h"
 #include "../include/fern/clock.h"
 #include "../include/fern/encoder.h"
 #include "../include/fern/isolatedAudioCapture.h"
@@ -309,6 +310,7 @@ void RunCaptureSession(const Settings& settings) {
         DrainVideoEncoder(videoEncoder.Get(), videoEventGen.Get(), ringBuffer, framesProduced, settings.fps);
 
         if (triggerSave.exchange(false)) {
+            ShowCaptureFeedback();
             pendingSave = true;
             pendingSaveEndHns = FrameBoundaryHns(nextFrameIndex, settings.fps);
             pendingSaveReadyHns = CurrentQpcHns() + kSaveAudioSettleHns;

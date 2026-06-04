@@ -23,7 +23,7 @@ namespace FernUI.Views
         private double _startPointerX;
         private double _startHandleLeft;
         private double _startHandleRight;
-        private Grid _activeHandle = null;
+        private Grid? _activeHandle = null;
         private bool _isTimelineVisible = false;
 
         private List<FrameworkElement> _displayedCards = new();
