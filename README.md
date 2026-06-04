@@ -8,7 +8,7 @@ Fern aims for a hostile takeover of the bloated, resource-hogging clipping softw
 
 Every major clipping software on the market (Medal, SteelSeries GG, Overwolf, and even NVIDIA App) makes the same architectural compromise. They run heavy, monolithic structures or fake "decoupled" processes.
 
-Sure, corporations *claim* they separate their engine from their interface. Their UIs are bloated Electron or Chromium Embedded Framework monstrosities. Even when you are mid-fight in a competitive match, it idles in your system tray—hogging 200MB+ of RAM, spawning hidden web-helper processes, running telemetry background tasks, and causing game-losing micro-stutters.
+Sure, corporations *claim* they separate their engine from their interface. Their UIs are bloated Electron or Chromium Embedded Framework monstrosities. Even when you are mid-fight in a competitive match, it idles in your system tray-hogging 200MB+ of RAM, spawning hidden web-helper processes, running telemetry background tasks, and causing game-losing micro-stutters.
 
 ### Fern's Radical Approach
 
