@@ -12,11 +12,13 @@ add_executable(Fern WIN32
     src/ipc_server.cpp
     src/hotkey.cpp
     src/dump.cpp
+    src/isolatedAudioCapture.cpp
     include/fern/capture.h
     include/fern/encoder.h
     include/fern/buffer.h
     include/fern/ipc_server.h
     include/fern/hotkey.h
-    include/fern/dump.h)
+    include/fern/dump.h
+    include/fern/isolatedAudioCapture.h)
 
-target_link_libraries(Fern d3d11 dxgi mfplat mfuuid mfreadwrite)
+target_link_libraries(Fern d3d11 dxgi mfplat mfuuid mfreadwrite mmdevapi RuntimeObject)

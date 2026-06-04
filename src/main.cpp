@@ -6,6 +6,7 @@
 #include <mferror.h>
 #include <chrono>
 #include <thread>
+#include <tlhelp32.h>
 
 #include "../include/fern/capture.h"
 #include "../include/fern/encoder.h"
@@ -13,242 +14,231 @@
 #include "../include/fern/ipc_server.h"
 #include "../include/fern/hotkey.h"
 #include "../include/fern/dump.h"
+#include "../include/fern/isolatedAudioCapture.h"
+
+#include <algorithm>
+
+void AsyncSaveWorker(std::deque<StreamSample> samples, std::vector<ComPtr<IMFMediaType>> types, std::wstring filename) {
+    HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (FAILED(hr)) std::cerr << "SAVE ERROR: CoInitializeEx " << std::hex << hr << std::endl;
+    
+    hr = MFStartup(MF_VERSION);
+    if (FAILED(hr)) std::cerr << "SAVE ERROR: MFStartup " << std::hex << hr << std::endl;
+    
+    bool hasAudio = false;
+    for (auto& ss : samples) if (ss.streamIndex == 1) { hasAudio = true; break; }
+    
+    //tri chronologique des samples
+    std::vector<StreamSample> sortedSamples(samples.begin(), samples.end());
+    std::sort(sortedSamples.begin(), sortedSamples.end(), [](const StreamSample& a, const StreamSample& b) {
+        LONGLONG tA = 0, tB = 0;
+        a.sample->GetSampleTime(&tA);
+        b.sample->GetSampleTime(&tB);
+        return tA < tB;
+    });
+
+    //filtrage, le fichier commence par une I-Frame Vidéo
+    std::vector<StreamSample> validSamples;
+    bool videoKeyframeFound = false;
+    for (auto& ss : sortedSamples) {
+        if (!videoKeyframeFound) {
+            if (ss.streamIndex == 0) { //sample vidéo
+                UINT32 isCleanPoint = 0;
+                if (SUCCEEDED(ss.sample->GetUINT32(MFSampleExtension_CleanPoint, &isCleanPoint)) && isCleanPoint) {
+                    videoKeyframeFound = true;
+                    ss.sample->SetUINT32(MFSampleExtension_Discontinuity, TRUE);
+                    validSamples.push_back(ss);
+                }
+            }
+            //on jette le reste
+        } else {
+            validSamples.push_back(ss);
+        }
+    }
+
+    if (validSamples.empty()) {
+        std::cerr << "SAVE ERROR: Aucune I-Frame video trouvee. Fichier annule." << std::endl;
+    } else {
+        ComPtr<IMFAttributes> pAttributes;
+        MFCreateAttributes(&pAttributes, 1);
+        pAttributes->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE);
+
+        ComPtr<IMFSinkWriter> pSinkWriter;
+        DWORD vIdx = 0, aIdx = 0;
+        
+        hr = MFCreateSinkWriterFromURL(filename.c_str(), nullptr, pAttributes.Get(), &pSinkWriter);
+        if (FAILED(hr)) {
+            std::cerr << "SAVE ERROR: MFCreateSinkWriterFromURL " << std::hex << hr << std::endl;
+        } else {
+            hr = pSinkWriter->AddStream(types[0].Get(), &vIdx);
+            if (FAILED(hr)) std::cerr << "SAVE ERROR: AddStream Vid " << std::hex << hr << std::endl;
+            
+            if (hasAudio && types.size() > 1) {
+                hr = pSinkWriter->AddStream(types[1].Get(), &aIdx);
+                if (FAILED(hr)) std::cerr << "SAVE ERROR: AddStream Aud " << std::hex << hr << std::endl;
+            }
+            
+            hr = pSinkWriter->BeginWriting();
+            if (FAILED(hr)) {
+                std::cerr << "SAVE ERROR: BeginWriting " << std::hex << hr << std::endl;
+            } else {
+                LONGLONG offset = -1;
+                int writtenVid = 0, writtenAud = 0;
+                int totalSamples = validSamples.size();
+                int processed = 0;
+                
+                for (auto& ss : validSamples) {
+                    processed++;
+                    if (processed % 50 == 0 || processed == totalSamples) {
+                        std::cout << "\r>>> Sauvegarde en cours... " << (processed * 100 / totalSamples) << "% (" << processed << "/" << totalSamples << ")   " << std::flush;
+                    }
+
+                    if (ss.streamIndex == 1 && !hasAudio) continue;
+                    
+                    LONGLONG time = 0; ss.sample->GetSampleTime(&time);
+                    if (offset == -1) offset = time;
+                    
+                    ComPtr<IMFSample> pOut; MFCreateSample(&pOut);
+                    ss.sample->CopyAllItems(pOut.Get());
+                    
+                    //recalage temporel
+                    LONGLONG newTime = time - offset;
+                    if (newTime < 0) newTime = 0;
+                    pOut->SetSampleTime(newTime);
+                    
+                    UINT64 dts = 0;
+                    if (SUCCEEDED(pOut->GetUINT64(MFSampleExtension_DecodeTimestamp, &dts))) {
+                        LONGLONG newDts = (LONGLONG)dts - offset;
+                        if (newDts < 0) newDts = 0;
+                        pOut->SetUINT64(MFSampleExtension_DecodeTimestamp, newDts);
+                    }
+                    
+                    LONGLONG dur = 0; if (SUCCEEDED(ss.sample->GetSampleDuration(&dur))) pOut->SetSampleDuration(dur);
+                    
+                    DWORD bCount = 0; ss.sample->GetBufferCount(&bCount);
+                    for (DWORD i = 0; i < bCount; i++) {
+                        ComPtr<IMFMediaBuffer> pB; ss.sample->GetBufferByIndex(i, &pB);
+                        pOut->AddBuffer(pB.Get());
+                    }
+                    
+                    hr = pSinkWriter->WriteSample(ss.streamIndex == 0 ? vIdx : aIdx, pOut.Get());
+                    if (FAILED(hr)) {
+                        std::cerr << "\nSAVE ERROR: WriteSample (Stream " << ss.streamIndex << ") 0x" << std::hex << hr << std::dec << std::endl;
+                    } else {
+                        if (ss.streamIndex == 0) writtenVid++; else writtenAud++;
+                    }
+                }
+                std::cout << "\n>>> Samples ecrits - Video: " << writtenVid << ", Audio: " << writtenAud << std::endl;
+                
+                hr = pSinkWriter->Finalize();
+                if (FAILED(hr)) std::cerr << "SAVE ERROR: Finalize " << std::hex << hr << std::endl;
+            }
+        }
+    }
+
+    std::wcout << L">>> Exportation terminee : " << filename << (hasAudio ? L" (Video+Audio)" : L" (Video seule)") << std::endl;
+    MFShutdown();
+    CoUninitialize();
+}
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLine, int nCmdShow) {
-    //setup
-    int targetFps = 60;
-    int maxClipDurationSeconds = 30;
-    LONGLONG tickIntervalHns = HNS_PER_SEC / targetFps;
-
-    //console
     AllocConsole();
-    FILE* fpOUT;
-    FILE* fpERR;
-    FILE* fpIN;
-    freopen_s(&fpOUT, "CONOUT$", "w", stdout);
-    freopen_s(&fpERR, "CONOUT$", "w", stderr);
-    freopen_s(&fpIN, "CONIN$", "r", stdin);
+    FILE* fpOUT; freopen_s(&fpOUT, "CONOUT$", "w", stdout);
+    FILE* fpERR; freopen_s(&fpERR, "CONOUT$", "w", stderr);
+    FILE* fpIN;  freopen_s(&fpIN,  "CONIN$",  "r", stdin);
     std::cout.clear();
     std::cerr.clear();
     std::cin.clear();
 
-    //init serveur IPC
-    extern std::atomic<bool> running;
-    extern std::atomic<bool> triggerSave;
-    std::thread ipcThread(RunIpcServer, std::ref(running), std::ref(triggerSave));
-    ipcThread.detach();
-
-    std::thread hotkeyThread(RunHotkeyListener, std::ref(running), std::ref(triggerSave));
-    hotkeyThread.detach();
-
-    HRESULT hr = InitializeMediaFoundation();
-    if (FAILED(hr)) {
-        std::cerr << "Media Foundation erreur d'initialisation : " << hr << std::endl;
-        return -1;
-    }
-
-    HANDLE hTimer = NULL;
-    
-    //bloc de portée pour assurer la destruction des ComPtr avant ShutdownMediaFoundation()
+    int targetFps = 60; int maxClipDurationSeconds = 30; LONGLONG tickIntervalHns = HNS_PER_SEC / targetFps;
+    extern std::atomic<bool> running; extern std::atomic<bool> triggerSave;
+    std::thread ipcThread(RunIpcServer, std::ref(running), std::ref(triggerSave)); ipcThread.detach();
+    std::thread hotkeyThread(RunHotkeyListener, std::ref(running), std::ref(triggerSave)); hotkeyThread.detach();
+    InitializeMediaFoundation();
     {
-        std::cout << "== SETUP ==" << std::endl;
+        D3D11Context structDevice = GetD3D11Device(); if (!structDevice.device) goto cleanup;
+        auto outputDuplication = getOutputDuplication(structDevice.device.Get(), getOutputs1(getAdapters1(getFactory1().Get())[0].Get())[0].Get());
+        if (!outputDuplication) goto cleanup;
+        DXGI_OUTDUPL_DESC duplDesc; outputDuplication->GetDesc(&duplDesc);
+        auto dxgiDeviceManager = CreateDXGIDeviceManager(structDevice.device.Get());
 
-        std::cout << "Cree le device" << std::endl;
-        D3D11Context structDevice = GetD3D11Device();
-        ComPtr<ID3D11Device> device = structDevice.device;
-        ComPtr<ID3D11DeviceContext> deviceContext = structDevice.deviceContext;
-        
-        if (!device || !deviceContext) {
-            std::cerr << "Erreur creation device D3D11" << std::endl;
-            goto cleanup;
+        //init audio + verif
+        IsolatedAudioCapture audioCapture(0); 
+        ComPtr<IMFTransform> pAudioEncoder;
+        if (SUCCEEDED(audioCapture.Start())) {
+            HRESULT hrAudio = InitializeAudioEncoder(pAudioEncoder, audioCapture.GetFormat());
+            if (SUCCEEDED(hrAudio)) std::cout << "AUDIO: Encodeur AAC pret." << std::endl;
+            else std::cerr << "AUDIO ERROR: Echec encodeur AAC (0x" << std::hex << hrAudio << ")" << std::endl;
         }
 
-        std::cout << "Attrape la factory" << std::endl;
-        ComPtr<IDXGIFactory1> factory = getFactory1();
-        if (!factory) {
-            std::cerr << "Erreur acquisition DXGI Factory" << std::endl;
-            goto cleanup;
-        }
+        ComPtr<IMFTransform> pVideoEncoder;
+        InitializeHardwareEncoder(dxgiDeviceManager.deviceManager.Get(), pVideoEncoder, duplDesc.ModeDesc.Width, duplDesc.ModeDesc.Height);
+        RingBuffer ringBuffer(maxClipDurationSeconds * HNS_PER_SEC);
+        ComPtr<IMFMediaEventGenerator> pVideoEventGen; pVideoEncoder.As(&pVideoEventGen);
+        ComPtr<ID3D11Texture2D> copyTexture;
+        D3D11_TEXTURE2D_DESC copyDesc = { duplDesc.ModeDesc.Width, duplDesc.ModeDesc.Height, 1, 1, DXGI_FORMAT_B8G8R8A8_UNORM, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE, 0, 0 };
+        structDevice.device->CreateTexture2D(&copyDesc, nullptr, &copyTexture);
+        pVideoEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
+        pVideoEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
+        if (pAudioEncoder) { pAudioEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0); pAudioEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0); }
+        HANDLE hTimer = CreateWaitableTimerEx(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+        LARGE_INTEGER liDueTime; liDueTime.QuadPart = -tickIntervalHns;
+        SetWaitableTimer(hTimer, &liDueTime, 0, NULL, NULL, FALSE);
+        LARGE_INTEGER startQpc; QueryPerformanceCounter(&startQpc);
+        audioCapture.SetStartTime(startQpc.QuadPart);
+        LONGLONG hnsTimestamp = 0; int framesProduced = 0;
+        std::cout << "Capture Fern active. F9 pour sauvegarder." << std::endl;
 
-        std::cout << "Attrape les adapters" << std::endl;
-        std::vector<ComPtr<IDXGIAdapter1>> adapters = getAdapters1(factory.Get());
-        if (adapters.empty()) {
-            std::cerr << "Aucun adapter trouve" << std::endl;
-            goto cleanup;
-        }
-        for (size_t i = 0; i < adapters.size(); ++i) {
-            DXGI_ADAPTER_DESC1 desc;
-            adapters[i]->GetDesc1(&desc);
-            std::wcout << "> Adapter " << i << ": " << desc.Description << std::endl;
-        }
-
-        std::cout << "Attrape les outputs" << std::endl;
-        std::vector<ComPtr<IDXGIOutput1>> outputs = getOutputs1(adapters[0].Get());
-        if (outputs.empty()) {
-            std::cerr << "Aucune sortie trouvee sur le premier adapter" << std::endl;
-            goto cleanup;
-        }
-        for (size_t i = 0; i < outputs.size(); ++i) {
-            DXGI_OUTPUT_DESC desc;
-            outputs[i]->GetDesc(&desc);
-            std::wcout << "> Sortie " << i << ": " << desc.DeviceName << std::endl;
-        }
-
-        std::cout << "Attrape l'output duplication" << std::endl;
-        ComPtr<IDXGIOutputDuplication> outputDuplication = getOutputDuplication(device.Get(), outputs[0].Get());
-        if (!outputDuplication) {
-            std::cerr << "Erreur creation output duplication" << std::endl;
-            goto cleanup;
-        }
-
-        DXGI_OUTDUPL_DESC duplDesc;
-        outputDuplication->GetDesc(&duplDesc);
-        std::wcout << "> Resolution sortie dupliquee : " << duplDesc.ModeDesc.Width << "x" << duplDesc.ModeDesc.Height << std::endl;
-
-        std::cout << "== TRAITEMENT ==" << std::endl;
-
-        DXGIDeviceManagerAndUInt dxgiDeviceManager = CreateDXGIDeviceManager(device.Get());
-        ComPtr<IMFDXGIDeviceManager> spDeviceManager = dxgiDeviceManager.deviceManager;
-        
-        ComPtr<IMFTransform> pEncoder;
-        hr = InitializeHardwareEncoder(spDeviceManager.Get(), pEncoder, duplDesc.ModeDesc.Width, duplDesc.ModeDesc.Height);
-        
-        if (FAILED(hr)) {
-            std::cerr << "erreur initialisation encodeur hardware : " << hr << std::endl;
-            goto cleanup;
-        } 
-        
-        std::cout << "Encodeur hardware initialise avec succes" << std::endl;
-        
-        {//scope pour libérer les ressources avant shutdown
-
-            //cree tampon circulaire
-            RingBuffer ringBuffer(maxClipDurationSeconds * HNS_PER_SEC);
-
-            //gen d'events de l'encodeur
-            ComPtr<IMFMediaEventGenerator> pEventGen;
-            hr = pEncoder.As(&pEventGen);
-            if (FAILED(hr)) goto cleanup;
-
-            //crée texture de copie (Zero-Copy source)
-            ComPtr<ID3D11Texture2D> copyTexture;
-            D3D11_TEXTURE2D_DESC copyDesc = {};
-            copyDesc.Width = duplDesc.ModeDesc.Width;
-            copyDesc.Height = duplDesc.ModeDesc.Height;
-            copyDesc.MipLevels = 1;
-            copyDesc.ArraySize = 1;
-            copyDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-            copyDesc.SampleDesc.Count = 1;
-            copyDesc.Usage = D3D11_USAGE_DEFAULT;
-            copyDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
-            hr = device->CreateTexture2D(&copyDesc, nullptr, &copyTexture);
-            if (FAILED(hr)) goto cleanup;
-
-            //démarre le flux
-            pEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
-            pEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
-
-            //init du timer
-            hTimer = CreateWaitableTimerEx(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-            if (!hTimer) {
-                std::cerr << "Erreur creation timer : " << GetLastError() << std::endl;
-                goto cleanup;
+        while (running) {
+            if (triggerSave.exchange(false)) {
+                ComPtr<IMFMediaType> vt, at;
+                pVideoEncoder->GetOutputCurrentType(0, &vt);
+                std::vector<ComPtr<IMFMediaType>> types = { vt };
+                if (pAudioEncoder) { pAudioEncoder->GetOutputCurrentType(0, &at); types.push_back(at); }
+                auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+                struct tm ti; localtime_s(&ti, &now); wchar_t ts[64]; wcsftime(ts, 64, L"clip_%Y%m%d_%H%M%S.mp4", &ti);
+                std::thread(AsyncSaveWorker, ringBuffer.GetSnapshot(), types, std::wstring(ts)).detach();
             }
-
-            LARGE_INTEGER liDueTime;
-            liDueTime.QuadPart = -tickIntervalHns;
-            SetWaitableTimer(hTimer, &liDueTime, 0, NULL, NULL, FALSE);
-
-            std::cout << "Capture en cours (" << targetFps << " FPS, " << maxClipDurationSeconds << "s buffer)" << std::endl;
-            auto start = std::chrono::high_resolution_clock::now();
-            LONGLONG hnsTimestamp = 0;
-            int framesProduced = 0;
-
-            int i = 0;
-            while (running) {
-
-                if (triggerSave.exchange(false)) {
-                    std::cout << ">>> Trigger sauvegarde demandee" << std::endl;
-                    ComPtr<IMFMediaType> pCurrentType;
-                    if (SUCCEEDED(pEncoder->GetOutputCurrentType(0, &pCurrentType))) {
-                        auto snapshot = ringBuffer.GetSnapshot();
-                        
-                        // Génération du nom de fichier avec timestamp
-                        auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-                        struct tm timeinfo;
-                        localtime_s(&timeinfo, &now);
-                        wchar_t timeStr[64];
-                        wcsftime(timeStr, 64, L"clip_%Y%m%d_%H%M%S.mp4", &timeinfo);
-                        
-                        std::jthread(AsyncDumpWorker, std::move(snapshot), pCurrentType, std::wstring(timeStr)).detach();
+            if (pAudioEncoder) {
+                ComPtr<IMFSample> asIn;
+                if (audioCapture.GetAudioSample(asIn) == S_OK) {
+                    HRESULT hrPush = PushAudioToEncoder(pAudioEncoder.Get(), asIn.Get());
+                    if (FAILED(hrPush)) {
+                        std::cerr << "PushAudio ERROR: 0x" << std::hex << hrPush << std::dec << std::endl;
+                    }
+                    ComPtr<IMFSample> asOut;
+                    while (SUCCEEDED(PullSampleFromEncoder(pAudioEncoder.Get(), asOut)) && asOut) {
+                        ringBuffer.AddSample(asOut.Get(), 1);
+                        asOut.Reset();
                     }
                 }
-                
-                ComPtr<IMFMediaEvent> pEvent;
-                hr = pEventGen->GetEvent(MF_EVENT_FLAG_NO_WAIT, &pEvent);
-                if (FAILED(hr)) {
-                    std::this_thread::sleep_for(std::chrono::microseconds(500));
-                    continue;
-                }
-
-                MediaEventType eventType;
-                pEvent->GetType(&eventType);
-
-                if (eventType == METransformNeedInput) {
-                    WaitForSingleObject(hTimer, INFINITE);
-                    liDueTime.QuadPart = -tickIntervalHns;
-                    SetWaitableTimer(hTimer, &liDueTime, 0, NULL, NULL, FALSE);
-
-                    ComPtr<IDXGIResource> resource = getResource(outputDuplication.Get());
-                    
-                    if (resource) {
-                        ComPtr<ID3D11Texture2D> texture = resourceToTexture(resource.Get());
-                        if (texture) {
-                            deviceContext->CopyResource(copyTexture.Get(), texture.Get());
-                        }
-                        outputDuplication->ReleaseFrame();
-                    } 
-                    
-                    if (SUCCEEDED(PushFrameToEncoder(pEncoder.Get(), copyTexture.Get(), hnsTimestamp))) {
-                        hnsTimestamp += tickIntervalHns;
-                        i++;
-                    }
-                }
-                else if (eventType == METransformHaveOutput) {
-                    ComPtr<IMFSample> pSample;
-                    if (SUCCEEDED(PullSampleFromEncoder(pEncoder.Get(), pSample))) {
-                        framesProduced++;
-                        ringBuffer.AddSample(pSample.Get());
-                        if (framesProduced % targetFps == 0) {
-                            std::cout << ">>> RAM: " << ringBuffer.GetSampleCount() << " samples (" << (ringBuffer.GetSampleCount() / targetFps) << "s)" << std::endl;
-                        }
-                    }
-                }
-                else if (eventType == METransformDrainComplete) {
-                    break;
-                }
-
-                i++;
             }
-            auto end = std::chrono::high_resolution_clock::now();
-            std::chrono::duration<double> elapsed = end - start;
-            // std::cout << "Capture terminee. RAM : " << ringBuffer.GetSampleCount() << " samples." << std::endl;
-            // std::cout << "Performance : " << elapsed.count() << "s pour 600 frames (cible 10s)." << std::endl;
-            // std::cout << "FPS Moyen : " << 600.0 / elapsed.count() << std::endl;
-
-            ComPtr<IMFMediaType> pCurrentType;
-            if (SUCCEEDED(pEncoder->GetOutputCurrentType(0, &pCurrentType))) {
-                ringBuffer.SaveToFile(L"clip.mp4", pCurrentType.Get());
+            ComPtr<IMFMediaEvent> pEvent;
+            HRESULT hr = pVideoEventGen->GetEvent(MF_EVENT_FLAG_NO_WAIT, &pEvent);
+            if (FAILED(hr)) { std::this_thread::sleep_for(std::chrono::microseconds(500)); continue; }
+            MediaEventType et; pEvent->GetType(&et);
+            if (et == METransformNeedInput) {
+                WaitForSingleObject(hTimer, INFINITE);
+                liDueTime.QuadPart = -tickIntervalHns; SetWaitableTimer(hTimer, &liDueTime, 0, NULL, NULL, FALSE);
+                auto res = getResource(outputDuplication.Get());
+                if (res) {
+                    auto tex = resourceToTexture(res.Get());
+                    if (tex) structDevice.deviceContext->CopyResource(copyTexture.Get(), tex.Get());
+                    outputDuplication->ReleaseFrame();
+                } 
+                if (SUCCEEDED(PushFrameToEncoder(pVideoEncoder.Get(), copyTexture.Get(), hnsTimestamp))) hnsTimestamp += tickIntervalHns;
             }
-
-            hr = S_OK;
+            else if (et == METransformHaveOutput) {
+                ComPtr<IMFSample> vs;
+                if (SUCCEEDED(PullSampleFromEncoder(pVideoEncoder.Get(), vs)) && vs) {
+                    framesProduced++; ringBuffer.AddSample(vs.Get(), 0);
+                    if (framesProduced % 60 == 0) std::cout << ">>> Status | Frames: " << framesProduced << " | Buffer total: " << ringBuffer.GetSampleCount() << std::endl;
+                }
+            }
+            else if (et == METransformDrainComplete) break;
         }
+        if (hTimer) CloseHandle(hTimer);
     }
-
 cleanup:
-    std::cout << "== CLEANUP ==" << std::endl;
-    if (hTimer) CloseHandle(hTimer);
-    ShutdownMediaFoundation();
-
-    return SUCCEEDED(hr) ? 0 : -1;
+    ShutdownMediaFoundation(); return 0;
 }

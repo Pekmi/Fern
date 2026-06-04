@@ -6,33 +6,39 @@
 #include <wrl/client.h>
 #include <deque>
 #include <mutex>
+#include <vector>
 
 using Microsoft::WRL::ComPtr;
 
-// gère le tampon circulaire de samples compressés en RAM
+//associe un sample à son index de flux (0=Vidéo, 1=Audio1, etc.)
+struct StreamSample {
+    ComPtr<IMFSample> sample;
+    DWORD streamIndex;
+};
+
+//gère le tampon circulaire de samples compressés en RAM
 class RingBuffer {
 public:
     RingBuffer(LONGLONG maxDurationHNS);
     ~RingBuffer();
 
-    // ajoute un sample et gère l'éviction
-    void AddSample(IMFSample* pSample);
+    //ajoute un sample avec index de flux
+    void AddSample(IMFSample* pSample, DWORD streamIndex);
     
-    // retourne le nombre de samples actuellement en mémoire
+    //retourne le nombre de samples actuellement en mémoire
     size_t GetSampleCount();
 
-    // vide le buffer
+    //vide le buffer
     void Clear();
 
-    // Retourne une copie de la deque de samples pour traitement asynchrone
-    std::deque<ComPtr<IMFSample>> GetSnapshot();
+    std::deque<StreamSample> GetSnapshot();
 
-    // sauvegarde le contenu actuel dans un fichier mp4
-    HRESULT SaveToFile(LPCWSTR pwszFileName, IMFMediaType* pMediaType);
+    //sauvegarde contenu dans mp4 multi-pistes
+    HRESULT SaveToFile(LPCWSTR pwszFileName, const std::vector<ComPtr<IMFMediaType>>& pMediaTypes);
 
 private:
-    std::deque<ComPtr<IMFSample>> m_samples;
-    LONGLONG m_maxDuration; // durée max x100ns
+    std::deque<StreamSample> m_samples;
+    LONGLONG m_maxDuration; //durée max x100ns
     std::mutex m_mutex;
 
     void EvictOldSamples();

@@ -21,9 +21,15 @@ void ShutdownMediaFoundation();
 struct DXGIDeviceManagerAndUInt {ComPtr<IMFDXGIDeviceManager> deviceManager; UINT resetToken;};
 DXGIDeviceManagerAndUInt CreateDXGIDeviceManager(ID3D11Device* device);
 
-//init encodeur hardware MFT
+//init encodeur hardware MFT (Vidéo)
 HRESULT InitializeHardwareEncoder(IMFDXGIDeviceManager* pDeviceManager, ComPtr<IMFTransform>& pEncoder, UINT width, UINT height);
 //envoie une frame au MFT
 HRESULT PushFrameToEncoder(IMFTransform* pEncoder, ID3D11Texture2D* pTexture, LONGLONG hnsTimestamp);
-//récup sample compressé du MFT
+
+//init encodeur audio AAC
+HRESULT InitializeAudioEncoder(ComPtr<IMFTransform>& pEncoder, WAVEFORMATEX* pInputFormat);
+//envoie du PCM au MFT audio
+HRESULT PushAudioToEncoder(IMFTransform* pEncoder, IMFSample* pSample);
+
+//récup sample compressé du MFT (Vidéo ou Audio)
 HRESULT PullSampleFromEncoder(IMFTransform* pEncoder, ComPtr<IMFSample>& pSample);
