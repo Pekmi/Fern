@@ -57,6 +57,21 @@
             </NavigationViewItem>
         </NavigationView.MenuItems>
 
+        <NavigationView.FooterMenuItems>
+            <NavigationViewItem x:Name="DaemonStatusItem"
+                                Content="Daemon inactif"
+                                Tag="DaemonStatus"
+                                SelectsOnInvoked="False"
+                                ToolTipService.ToolTip="Daemon inactif">
+                <NavigationViewItem.Icon>
+                    <FontIcon x:Name="DaemonStatusIcon"
+                              Glyph="&#xF137;"
+                              Foreground="#FFE5484D"
+                              FontSize="12"/>
+                </NavigationViewItem.Icon>
+            </NavigationViewItem>
+        </NavigationView.FooterMenuItems>
+
         <Frame x:Name="ContentFrame" Margin="0,0,0,0">
             <Frame.ContentTransitions>
                 <TransitionCollection>

@@ -16,34 +16,49 @@
                   PointerEntered="CardRoot_PointerEntered" 
                   PointerExited="CardRoot_PointerExited"
                   Tapped="CardRoot_Tapped"
+                  RenderTransformOrigin="0.5,0.5"
                   IsTabStop="True">
+                <Grid.RenderTransform>
+                    <CompositeTransform/>
+                </Grid.RenderTransform>
+
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <!-- Indicateur de sélection (clavier) -->
-                <Border x:Name="SelectionBorder" 
-                        Grid.RowSpan="2"
-                        Margin="-6"
-                        BorderBrush="{ThemeResource SystemControlHighlightAccentBrush}" 
-                        BorderThickness="3" 
-                        CornerRadius="16" 
-                        Opacity="0"/>
-
                 <!-- Zone Media -->
-                <Border CornerRadius="12" Height="{x:Bind CardHeight}" Background="{ThemeResource LayerFillColorDefaultBrush}">
+                <Border CornerRadius="12" Height="{Binding CardHeight}" Background="{ThemeResource LayerFillColorDefaultBrush}">
                     <Grid>
                         <!-- Image Statique -->
                         <Grid Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}">
-                            <FontIcon Glyph="{x:Bind ThumbnailIcon}" FontSize="32" Opacity="0.2"/>
+                            <FontIcon Glyph="{Binding ThumbnailIcon}" FontSize="32" Opacity="0.2"/>
+                            <Image x:Name="PreviewImageControl"
+                                   Source="{Binding PreviewImage}"
+                                   Stretch="UniformToFill"
+                                   Opacity="0"/>
                         </Grid>
+
+                        <Border x:Name="SelectionBorder"
+                                Canvas.ZIndex="10"
+                                IsHitTestVisible="False"
+                                BorderBrush="{ThemeResource SystemControlHighlightAccentBrush}"
+                                BorderThickness="3"
+                                CornerRadius="12"
+                                Opacity="0"/>
+
+                        <Border x:Name="NewClipHighlightBorder"
+                                IsHitTestVisible="False"
+                                BorderBrush="{ThemeResource SystemControlHighlightAccentBrush}"
+                                BorderThickness="2"
+                                CornerRadius="12"
+                                Opacity="0"/>
                         
                         <!-- Player Video -->
                         <MediaPlayerElement x:Name="HoverPlayer" 
                                             AreTransportControlsEnabled="False" 
                                             AutoPlay="False"
-                                            Source="{x:Bind VideoUrl}"
+                                            Source="{Binding VideoUrl}"
                                             Opacity="0"
                                             Stretch="UniformToFill">
                             <MediaPlayerElement.Transitions>
@@ -55,22 +70,25 @@
 
                         <!-- CORRECTIF BADGE DURÉE -->
                         <Border x:Name="DurationBadge" 
-                                Visibility="{x:Bind DurationVisibility}"
+                                Visibility="{Binding DurationVisibility}"
                                 VerticalAlignment="Bottom" HorizontalAlignment="Right" 
                                 Margin="8" Background="#80000000" CornerRadius="4" Padding="6,2">
-                            <TextBlock Text="{x:Bind Duration}" Foreground="White" FontSize="11" FontWeight="Medium"/>
+                            <TextBlock Text="{Binding Duration}" Foreground="White" FontSize="11" FontWeight="Medium"/>
+                        </Border>
+
+                        <Border Visibility="{Binding ResolutionVisibility}"
+                                VerticalAlignment="Top" HorizontalAlignment="Left"
+                                Margin="8" Background="#80000000" CornerRadius="4" Padding="6,2">
+                            <TextBlock Text="{Binding Resolution}" Foreground="White" FontSize="11" FontWeight="Medium"/>
                         </Border>
                     </Grid>
                 </Border>
 
                 <!-- Infos -->
                 <StackPanel Grid.Row="1" Margin="4,12,4,0">
-                    <TextBlock Text="{x:Bind Title}" Style="{ThemeResource BodyStrongTextBlockStyle}" MaxLines="2" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding Title}" Style="{ThemeResource BodyStrongTextBlockStyle}" MaxLines="2" TextTrimming="CharacterEllipsis"/>
                     <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                        <Border Background="{ThemeResource SystemControlBackgroundAccentBrush}" CornerRadius="4" Padding="6,1" Margin="0,0,8,0">
-                            <TextBlock Text="{x:Bind Game}" Foreground="White" FontSize="10" FontWeight="Bold"/>
-                        </Border>
-                        <TextBlock Text="{x:Bind Date}" Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <TextBlock Text="{Binding Date}" Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                     </StackPanel>
                 </StackPanel>
             </Grid>
@@ -176,7 +194,6 @@
                                       PointerReleased="Handle_PointerReleased"
                                       Background="Transparent" Width="40" Height="40">
                                     <Ellipse Width="16" Height="16" Fill="White" Stroke="{ThemeResource SystemControlHighlightAccentBrush}" StrokeThickness="3" VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                                    <TextBlock x:Name="StartDateText" Text="Début" FontSize="10" Margin="0,40,0,0" HorizontalAlignment="Center" FontWeight="SemiBold"/>
                                 </Grid>
 
                                 <!-- Point Fin -->
@@ -186,13 +203,50 @@
                                       PointerReleased="Handle_PointerReleased"
                                       Background="Transparent" Width="40" Height="40">
                                     <Ellipse Width="16" Height="16" Fill="White" Stroke="{ThemeResource SystemControlHighlightAccentBrush}" StrokeThickness="3" VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                                    <TextBlock x:Name="EndDateText" Text="Fin" FontSize="10" Margin="0,40,0,0" HorizontalAlignment="Center" FontWeight="SemiBold"/>
                                 </Grid>
+
+                                <TextBlock x:Name="StartDateText"
+                                           Canvas.Top="72"
+                                           Width="120"
+                                           Text="Début"
+                                           FontSize="11"
+                                           TextAlignment="Center"
+                                           FontWeight="SemiBold"
+                                           IsHitTestVisible="False"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock x:Name="EndDateText"
+                                           Canvas.Top="72"
+                                           Width="120"
+                                           Text="Fin"
+                                           FontSize="11"
+                                           TextAlignment="Center"
+                                           FontWeight="SemiBold"
+                                           IsHitTestVisible="False"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                             </Canvas>
                         </Grid>
                     </Grid>
                 </Border>
             </Grid>
+
+            <Border x:Name="EmptyState"
+                    Visibility="Collapsed"
+                    Background="{ThemeResource LayerFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="12"
+                    Padding="28"
+                    Margin="0,8,0,0">
+                <StackPanel Spacing="8">
+                    <FontIcon Glyph="&#xE714;" FontSize="28" Opacity="0.55"/>
+                    <TextBlock Text="Aucun clip dans le dossier Fern" Style="{ThemeResource BodyStrongTextBlockStyle}" HorizontalAlignment="Center"/>
+                    <TextBlock x:Name="EmptyStatePathText"
+                               TextWrapping="Wrap"
+                               TextAlignment="Center"
+                               Style="{ThemeResource CaptionTextBlockStyle}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                </StackPanel>
+            </Border>
 
             <!-- GRILLE MASONRY -->
             <Grid ColumnSpacing="16">
@@ -206,6 +260,7 @@
                     <StackPanel.ChildrenTransitions>
                         <TransitionCollection>
                             <AddDeleteThemeTransition />
+                            <RepositionThemeTransition />
                             <EntranceThemeTransition FromVerticalOffset="40" />
                         </TransitionCollection>
                     </StackPanel.ChildrenTransitions>
@@ -215,6 +270,7 @@
                     <StackPanel.ChildrenTransitions>
                         <TransitionCollection>
                             <AddDeleteThemeTransition />
+                            <RepositionThemeTransition />
                             <EntranceThemeTransition FromVerticalOffset="60" />
                         </TransitionCollection>
                     </StackPanel.ChildrenTransitions>
@@ -224,6 +280,7 @@
                     <StackPanel.ChildrenTransitions>
                         <TransitionCollection>
                             <AddDeleteThemeTransition />
+                            <RepositionThemeTransition />
                             <EntranceThemeTransition FromVerticalOffset="80" />
                         </TransitionCollection>
                     </StackPanel.ChildrenTransitions>

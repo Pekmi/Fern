@@ -27,6 +27,9 @@ namespace FernUI
     public sealed partial class MainWindow : Window
     {
         private Microsoft.UI.Windowing.AppWindow _appWindow;
+        private readonly DispatcherTimer _daemonStatusTimer = new();
+        private bool _isCheckingDaemonStatus;
+        private bool? _lastDaemonActive;
 
         public MainWindow()
         {
@@ -37,7 +40,12 @@ namespace FernUI
             IntPtr hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
             var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hWnd);
             _appWindow = Microsoft.UI.Windowing.AppWindow.GetFromWindowId(windowId);
-            _appWindow.Resize(new Windows.Graphics.SizeInt32 { Width = 1200, Height = 800 });
+            _appWindow.Resize(new Windows.Graphics.SizeInt32 { Width = 1400, Height = 800 });
+
+            _daemonStatusTimer.Interval = TimeSpan.FromSeconds(2);
+            _daemonStatusTimer.Tick += DaemonStatusTimer_Tick;
+            _daemonStatusTimer.Start();
+            _ = RefreshDaemonStatusAsync();
         }
 
         private async void CaptureButton_Click(object sender, RoutedEventArgs e)
@@ -59,11 +67,70 @@ namespace FernUI
                         await writer.WriteAsync("SAVE");
                     }
                 }
+
+                UpdateDaemonStatus(true);
             }
             catch (Exception)
             {
                 // Silently fail for now, or log if needed
+                UpdateDaemonStatus(false);
             }
+        }
+
+        private async void DaemonStatusTimer_Tick(object? sender, object e)
+        {
+            await RefreshDaemonStatusAsync();
+        }
+
+        private async Task RefreshDaemonStatusAsync()
+        {
+            if (_isCheckingDaemonStatus) return;
+
+            _isCheckingDaemonStatus = true;
+            try
+            {
+                bool isActive = await IsDaemonAvailableAsync();
+                UpdateDaemonStatus(isActive);
+            }
+            finally
+            {
+                _isCheckingDaemonStatus = false;
+            }
+        }
+
+        private static async Task<bool> IsDaemonAvailableAsync()
+        {
+            try
+            {
+                using var pipeClient = new NamedPipeClientStream(".", "FernPipe", PipeDirection.Out, PipeOptions.Asynchronous);
+                await pipeClient.ConnectAsync(200);
+                return pipeClient.IsConnected;
+            }
+            catch (TimeoutException)
+            {
+                return false;
+            }
+            catch (IOException)
+            {
+                return false;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+
+        private void UpdateDaemonStatus(bool isActive)
+        {
+            if (_lastDaemonActive == isActive) return;
+
+            _lastDaemonActive = isActive;
+            string label = isActive ? "Daemon actif" : "Daemon inactif";
+            DaemonStatusItem.Content = label;
+            ToolTipService.SetToolTip(DaemonStatusItem, label);
+            DaemonStatusIcon.Foreground = new SolidColorBrush(isActive
+                ? Windows.UI.Color.FromArgb(255, 62, 203, 127)
+                : Windows.UI.Color.FromArgb(255, 229, 72, 77));
         }
 
         private void FullScreenButton_Click(object sender, RoutedEventArgs e)
@@ -106,7 +173,7 @@ namespace FernUI
             }
             else if (args.InvokedItemContainer != null)
             {
-                var tag = args.InvokedItemContainer.Tag.ToString();
+                var tag = args.InvokedItemContainer.Tag as string;
                 switch (tag)
                 {
                     case "GalleryPage":
