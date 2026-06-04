@@ -11,8 +11,14 @@
 #include "../include/fern/encoder.h"
 #include "../include/fern/buffer.h"
 #include "../include/fern/ipc_server.h"
+#include "../include/fern/hotkey.h"
+#include "../include/fern/dump.h"
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLine, int nCmdShow) {
+    //setup
+    int targetFps = 60;
+    int maxClipDurationSeconds = 30;
+    LONGLONG tickIntervalHns = HNS_PER_SEC / targetFps;
 
     //console
     AllocConsole();
@@ -32,6 +38,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLin
     std::thread ipcThread(RunIpcServer, std::ref(running), std::ref(triggerSave));
     ipcThread.detach();
 
+    std::thread hotkeyThread(RunHotkeyListener, std::ref(running), std::ref(triggerSave));
+    hotkeyThread.detach();
+
     HRESULT hr = InitializeMediaFoundation();
     if (FAILED(hr)) {
         std::cerr << "Media Foundation erreur d'initialisation : " << hr << std::endl;
@@ -40,7 +49,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLin
 
     HANDLE hTimer = NULL;
     
-    // Bloc de portée pour assurer la destruction des ComPtr avant ShutdownMediaFoundation()
+    //bloc de portée pour assurer la destruction des ComPtr avant ShutdownMediaFoundation()
     {
         std::cout << "== SETUP ==" << std::endl;
 
@@ -113,8 +122,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLin
         
         {//scope pour libérer les ressources avant shutdown
 
-            //cree tampon circulaire (30s)
-            RingBuffer ringBuffer(30LL * HNS_PER_SEC);
+            //cree tampon circulaire
+            RingBuffer ringBuffer(maxClipDurationSeconds * HNS_PER_SEC);
 
             //gen d'events de l'encodeur
             ComPtr<IMFMediaEventGenerator> pEventGen;
@@ -139,7 +148,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLin
             pEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
             pEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
 
-            // Initialisation du timer pour 60 FPS
+            //init du timer
             hTimer = CreateWaitableTimerEx(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
             if (!hTimer) {
                 std::cerr << "Erreur creation timer : " << GetLastError() << std::endl;
@@ -147,30 +156,38 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLin
             }
 
             LARGE_INTEGER liDueTime;
-            liDueTime.QuadPart = -TICK_INTERVAL_HNS; // Démarre immédiatement (relatif)
+            liDueTime.QuadPart = -tickIntervalHns;
             SetWaitableTimer(hTimer, &liDueTime, 0, NULL, NULL, FALSE);
 
-            std::cout << "Capture en cours (600 frames)..." << std::endl;
+            std::cout << "Capture en cours (" << targetFps << " FPS, " << maxClipDurationSeconds << "s buffer)" << std::endl;
             auto start = std::chrono::high_resolution_clock::now();
             LONGLONG hnsTimestamp = 0;
             int framesProduced = 0;
 
-            // for (int i = 0; i < 600; ) {
             int i = 0;
             while (running) {
 
                 if (triggerSave.exchange(false)) {
-                    std::cout << ">>> Trigger sauvegarde demandee IPC" << std::endl;
+                    std::cout << ">>> Trigger sauvegarde demandee" << std::endl;
                     ComPtr<IMFMediaType> pCurrentType;
                     if (SUCCEEDED(pEncoder->GetOutputCurrentType(0, &pCurrentType))) {
-                        ringBuffer.SaveToFile(L"clip_triggered.mp4", pCurrentType.Get());
+                        auto snapshot = ringBuffer.GetSnapshot();
+                        
+                        // Génération du nom de fichier avec timestamp
+                        auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+                        struct tm timeinfo;
+                        localtime_s(&timeinfo, &now);
+                        wchar_t timeStr[64];
+                        wcsftime(timeStr, 64, L"clip_%Y%m%d_%H%M%S.mp4", &timeinfo);
+                        
+                        std::jthread(AsyncDumpWorker, std::move(snapshot), pCurrentType, std::wstring(timeStr)).detach();
                     }
                 }
                 
                 ComPtr<IMFMediaEvent> pEvent;
-                hr = pEventGen->GetEvent(0, &pEvent);
+                hr = pEventGen->GetEvent(MF_EVENT_FLAG_NO_WAIT, &pEvent);
                 if (FAILED(hr)) {
-                    // std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    std::this_thread::sleep_for(std::chrono::microseconds(500));
                     continue;
                 }
 
@@ -179,7 +196,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLin
 
                 if (eventType == METransformNeedInput) {
                     WaitForSingleObject(hTimer, INFINITE);
-                    liDueTime.QuadPart = -TICK_INTERVAL_HNS;
+                    liDueTime.QuadPart = -tickIntervalHns;
                     SetWaitableTimer(hTimer, &liDueTime, 0, NULL, NULL, FALSE);
 
                     ComPtr<IDXGIResource> resource = getResource(outputDuplication.Get());
@@ -193,7 +210,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLin
                     } 
                     
                     if (SUCCEEDED(PushFrameToEncoder(pEncoder.Get(), copyTexture.Get(), hnsTimestamp))) {
-                        hnsTimestamp += TICK_INTERVAL_HNS;
+                        hnsTimestamp += tickIntervalHns;
                         i++;
                     }
                 }
@@ -202,8 +219,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLin
                     if (SUCCEEDED(PullSampleFromEncoder(pEncoder.Get(), pSample))) {
                         framesProduced++;
                         ringBuffer.AddSample(pSample.Get());
-                        if (framesProduced % 60 == 0) {
-                            std::cout << ">>> RAM: " << ringBuffer.GetSampleCount() << " samples" << std::endl;
+                        if (framesProduced % targetFps == 0) {
+                            std::cout << ">>> RAM: " << ringBuffer.GetSampleCount() << " samples (" << (ringBuffer.GetSampleCount() / targetFps) << "s)" << std::endl;
                         }
                     }
                 }
@@ -215,9 +232,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR lpCmdLin
             }
             auto end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> elapsed = end - start;
-            std::cout << "Capture terminee. RAM : " << ringBuffer.GetSampleCount() << " samples." << std::endl;
-            std::cout << "Performance : " << elapsed.count() << "s pour 600 frames (cible 10s)." << std::endl;
-            std::cout << "FPS Moyen : " << 600.0 / elapsed.count() << std::endl;
+            // std::cout << "Capture terminee. RAM : " << ringBuffer.GetSampleCount() << " samples." << std::endl;
+            // std::cout << "Performance : " << elapsed.count() << "s pour 600 frames (cible 10s)." << std::endl;
+            // std::cout << "FPS Moyen : " << 600.0 / elapsed.count() << std::endl;
 
             ComPtr<IMFMediaType> pCurrentType;
             if (SUCCEEDED(pEncoder->GetOutputCurrentType(0, &pCurrentType))) {

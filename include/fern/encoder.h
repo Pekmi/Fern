@@ -11,10 +11,10 @@ using Microsoft::WRL::ComPtr;
 
 #pragma region encoder
 
-// Waitable timer and encoding constants
+//constantes pour l'encodage
 const LONGLONG HNS_PER_SEC = 10000000LL;
 const int TARGET_FPS = 60;
-const LONGLONG TICK_INTERVAL_HNS = HNS_PER_SEC / TARGET_FPS; // 166666 HNS for 60 FPS
+const LONGLONG TICK_INTERVAL_HNS = HNS_PER_SEC / TARGET_FPS;
 
 HRESULT InitializeMediaFoundation();
 void ShutdownMediaFoundation();

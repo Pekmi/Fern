@@ -126,7 +126,6 @@ ComPtr<ID3D11Texture2D> createStagingTexture(ID3D11Device* device, ID3D11Texture
 void MapAndPrintPixel(ID3D11DeviceContext* deviceContext, ID3D11Texture2D* stagingTexture) {
     D3D11_MAPPED_SUBRESOURCE mapped;
     
-    // CopyResource call removed because capturedTexture was null and uninitialized
     deviceContext->Map(stagingTexture, 0, D3D11_MAP_READ, 0, &mapped);
     deviceContext->Unmap(stagingTexture, 0);
 }
