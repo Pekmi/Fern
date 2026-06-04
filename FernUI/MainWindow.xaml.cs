@@ -16,14 +16,8 @@ using System.Threading.Tasks;
 using Windows.Foundation;
 using Windows.Foundation.Collections;
 
-// To learn more about WinUI, the WinUI project structure,
-// and more about our project templates, see: http://aka.ms/winui-project-info.
-
 namespace FernUI
 {
-    /// <summary>
-    /// An empty window that can be used on its own or navigated to within a Frame.
-    /// </summary>
     public sealed partial class MainWindow : Window
     {
         private Microsoft.UI.Windowing.AppWindow _appWindow;
@@ -33,14 +27,16 @@ namespace FernUI
 
         public MainWindow()
         {
-            InitializeComponent();
+            this.InitializeComponent();
+
+            // Configurer la taille au démarrage
+            IntPtr hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+            Microsoft.UI.WindowId windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hWnd);
+            _appWindow = Microsoft.UI.Windowing.AppWindow.GetFromWindowId(windowId);
+            _appWindow.Resize(new Windows.Graphics.SizeInt32(1280, 720));
+
             ExtendsContentIntoTitleBar = true;
             SetTitleBar(null);
-
-            IntPtr hWnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
-            var windowId = Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hWnd);
-            _appWindow = Microsoft.UI.Windowing.AppWindow.GetFromWindowId(windowId);
-            _appWindow.Resize(new Windows.Graphics.SizeInt32 { Width = 1400, Height = 800 });
 
             _daemonStatusTimer.Interval = TimeSpan.FromSeconds(2);
             _daemonStatusTimer.Tick += DaemonStatusTimer_Tick;
@@ -72,7 +68,6 @@ namespace FernUI
             }
             catch (Exception)
             {
-                // Silently fail for now, or log if needed
                 UpdateDaemonStatus(false);
             }
         }
@@ -106,15 +101,7 @@ namespace FernUI
                 await pipeClient.ConnectAsync(200);
                 return pipeClient.IsConnected;
             }
-            catch (TimeoutException)
-            {
-                return false;
-            }
-            catch (IOException)
-            {
-                return false;
-            }
-            catch (UnauthorizedAccessException)
+            catch (Exception)
             {
                 return false;
             }

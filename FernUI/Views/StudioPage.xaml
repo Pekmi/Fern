@@ -8,6 +8,11 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
+    <Page.Resources>
+        <x:Double x:Key="InfoPanelMinWidth">200</x:Double>
+        <x:Double x:Key="InfoPanelMaxWidth">450</x:Double>
+    </Page.Resources>
+
     <Grid Padding="32">
         <Grid.ChildrenTransitions>
             <TransitionCollection>
@@ -32,33 +37,86 @@
 
         <Grid Grid.Row="1">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="2*"/>
-                <ColumnDefinition Width="1*"/>
+                <ColumnDefinition MinWidth="500"/>
+                <ColumnDefinition Width="300" MinWidth="200" MaxWidth="400"/>
             </Grid.ColumnDefinitions>
 
             <!-- COLONNE GAUCHE : Lecteur Vidéo -->
             <Grid Grid.Column="0" Margin="0,0,24,0">
-                <Border Background="Black" CornerRadius="12" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
-                    <Grid>
-                        <!-- Placeholder Lecteur -->
-                        <FontIcon Glyph="\uE714" Foreground="White" Opacity="0.1" FontSize="72"/>
-                        <TextBlock Text="Aperçu Vidéo" VerticalAlignment="Center" HorizontalAlignment="Center" Foreground="White" Opacity="0.5" Margin="0,100,0,0"/>
-                        
-                        <!-- Barre de contrôle bidon -->
-                        <Border VerticalAlignment="Bottom" Height="60" Background="#99000000" CornerRadius="0,0,12,12" Padding="20,0">
-                            <Grid>
+                <!-- All content (Video + Controls) is now in a single scaling block -->
+                <Viewbox Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <Grid Width="1920">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- Video (Top Rounded) -->
+                        <Border Grid.Row="0" Background="Black" CornerRadius="12,12,0,0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1,1,1,0">
+                            <MediaPlayerElement x:Name="StudioPlayer"
+                                                Width="1920" Height="1080"
+                                                AreTransportControlsEnabled="False"
+                                                AutoPlay="False"
+                                                Stretch="Uniform"/>
+                        </Border>
+
+                        <!-- Custom Controls (Stuck to Video, Sharp Corners) -->
+                        <Border Grid.Row="1" Background="#CC000000" Height="96" CornerRadius="0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                            <Grid Margin="24,0">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto"/>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="Auto"/> <!-- Play/Pause -->
+                                    <ColumnDefinition Width="*"/>    <!-- Seek Bar -->
+                                    <ColumnDefinition Width="Auto"/> <!-- Volume Group -->
+                                    <ColumnDefinition Width="Auto"/> <!-- Fullscreen -->
                                 </Grid.ColumnDefinitions>
-                                <FontIcon Glyph="\uE768" Foreground="White" FontSize="20" Margin="0,0,16,0"/>
-                                <Slider Grid.Column="1" Value="35" Minimum="0" Maximum="100" VerticalAlignment="Center"/>
-                                <TextBlock Grid.Column="2" Text="00:10 / 00:30" Foreground="White" VerticalAlignment="Center" Margin="16,0,0,0" FontSize="12"/>
+
+                                <!-- Play/Pause -->
+                                <Button x:Name="PlayPauseButton" 
+                                        Grid.Column="0" 
+                                        VerticalAlignment="Center"
+                                        Click="PlayPauseButton_Click"
+                                        Background="Transparent" BorderThickness="0"
+                                        Width="64" Height="64">
+                                    <FontIcon x:Name="PlayPauseIcon" Glyph="&#xE768;" FontSize="28" Foreground="White" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                </Button>
+
+                                <!-- Seek Bar -->
+                                <Slider x:Name="ProgressSlider" 
+                                        Grid.Column="1" 
+                                        Margin="32,0" 
+                                        VerticalAlignment="Center"
+                                        ValueChanged="ProgressSlider_ValueChanged"
+                                        Foreground="{ThemeResource SystemControlHighlightAccentBrush}"/>
+
+                                <!-- Volume Group -->
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,32,0">
+                                    <Button x:Name="MuteButton" 
+                                            Click="MuteButton_Click"
+                                            VerticalAlignment="Center"
+                                            Background="Transparent" BorderThickness="0"
+                                            Width="64" Height="64">
+                                        <FontIcon x:Name="VolumeIcon" Glyph="&#xE767;" FontSize="24" Foreground="White" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    </Button>
+                                    <Slider x:Name="VolumeSlider" 
+                                            Width="120" 
+                                            VerticalAlignment="Center"
+                                            Minimum="0" Maximum="100" Value="100"
+                                            ValueChanged="VolumeSlider_ValueChanged"/>
+                                </StackPanel>
+
+                                <!-- Fullscreen -->
+                                <Button x:Name="FullscreenButton" 
+                                        Grid.Column="3" 
+                                        Click="FullscreenButton_Click"
+                                        VerticalAlignment="Center"
+                                        Background="Transparent" BorderThickness="0"
+                                        Width="64" Height="64">
+                                    <FontIcon Glyph="&#xE740;" FontSize="24" Foreground="White" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                </Button>
                             </Grid>
                         </Border>
                     </Grid>
-                </Border>
+                </Viewbox>
             </Grid>
 
             <!-- COLONNE DROITE : Mixage & Infos -->
@@ -76,7 +134,7 @@
                         </Grid.RowDefinitions>
 
                         <StackPanel Grid.Row="0">
-                            <TextBlock Text="Informations" Style="{ThemeResource SubtitleTextBlockStyle}" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                            <TextBlock Text="Studio" Style="{ThemeResource SubtitleTextBlockStyle}" FontWeight="SemiBold" Margin="0,0,0,8"/>
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,24">
                                 <Border Background="{ThemeResource SystemControlBackgroundAccentBrush}" CornerRadius="4" Padding="8,2" Margin="0,0,12,0">
                                     <TextBlock x:Name="GameBadge" Text="JEU" Foreground="White" FontSize="11" FontWeight="Bold"/>

@@ -78,12 +78,43 @@ namespace FernUI.Models
         }
     }
 
-    public class AudioTrack
+    public class AudioTrack : INotifyPropertyChanged
     {
-        public string Name { get; set; } = string.Empty;
-        public string Icon { get; set; } = string.Empty;
-        public double Volume { get; set; }
-        public double PeakLevel { get; set; }
+        private string _name = string.Empty;
+        private string _icon = "\uE7F5";
+        private double _volume = 100;
+        private double _peakLevel;
+
+        public string Name { get => _name; set => SetProperty(ref _name, value); }
+        public string Icon { get => _icon; set => SetProperty(ref _icon, value); }
+        public double Volume 
+        { 
+            get => _volume; 
+            set 
+            {
+                if (SetProperty(ref _volume, value))
+                {
+                    OnVolumeChanged?.Invoke(this, value);
+                }
+            } 
+        }
+        public double PeakLevel { get => _peakLevel; set => SetProperty(ref _peakLevel, value); }
+
+        public event Action<AudioTrack, double>? OnVolumeChanged;
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        protected void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        }
+
+        protected bool SetProperty<T>(ref T storage, T value, [CallerMemberName] string? propertyName = null)
+        {
+            if (EqualityComparer<T>.Default.Equals(storage, value)) return false;
+            storage = value;
+            OnPropertyChanged(propertyName);
+            return true;
+        }
     }
 
     public class CloudShareItem
