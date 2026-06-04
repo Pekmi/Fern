@@ -166,34 +166,50 @@ namespace FernUI.Views
         private void Page_KeyDown(object sender, KeyRoutedEventArgs e)
         {
             if (_displayedCards.Count == 0) return;
-            if (FocusManager.GetFocusedElement(this.XamlRoot) is AutoSuggestBox) return;
+            
+            // Ignorer si on est dans la barre de recherche
+            if (FocusManager.GetFocusedElement(this.XamlRoot) is AutoSuggestBox || 
+                FocusManager.GetFocusedElement(this.XamlRoot) is TextBox) return;
 
+            bool isNavKey = true;
             int newIndex = _selectedIndex;
+
             switch (e.Key)
             {
                 case Windows.System.VirtualKey.Right:
-                    newIndex = Math.Min(_displayedCards.Count - 1, (_selectedIndex < 0 ? -1 : _selectedIndex) + 1);
+                    if (_selectedIndex < 0) newIndex = 0;
+                    else newIndex = Math.Min(_displayedCards.Count - 1, _selectedIndex + 1);
                     break;
                 case Windows.System.VirtualKey.Left:
-                    newIndex = Math.Max(0, _selectedIndex - 1);
+                    if (_selectedIndex < 0) newIndex = 0;
+                    else newIndex = Math.Max(0, _selectedIndex - 1);
                     break;
                 case Windows.System.VirtualKey.Down:
-                    newIndex = Math.Min(_displayedCards.Count - 1, (_selectedIndex < 0 ? 0 : _selectedIndex) + 3);
+                    if (_selectedIndex < 0) newIndex = 0;
+                    else newIndex = Math.Min(_displayedCards.Count - 1, _selectedIndex + 3);
                     break;
                 case Windows.System.VirtualKey.Up:
-                    newIndex = Math.Max(0, _selectedIndex - 3);
+                    if (_selectedIndex < 0) newIndex = 0;
+                    else newIndex = Math.Max(0, _selectedIndex - 3);
                     break;
                 case Windows.System.VirtualKey.Enter:
                     if (_selectedIndex >= 0) Frame.Navigate(typeof(StudioPage), _displayedCards[_selectedIndex].DataContext);
                     return;
-                default:
+                case Windows.System.VirtualKey.Escape:
+                    if (_selectedIndex >= 0) UpdateSelection(-1);
                     return;
+                default:
+                    isNavKey = false;
+                    break;
             }
 
-            if (newIndex != _selectedIndex)
+            if (isNavKey)
             {
-                UpdateSelection(newIndex);
-                e.Handled = true;
+                e.Handled = true; // Empêche le ScrollViewer de scroller par défaut
+                if (newIndex != _selectedIndex)
+                {
+                    UpdateSelection(newIndex);
+                }
             }
         }
 

@@ -13,8 +13,6 @@ using Microsoft::WRL::ComPtr;
 
 //constantes pour l'encodage
 const LONGLONG HNS_PER_SEC = 10000000LL;
-const int TARGET_FPS = 60;
-const LONGLONG TICK_INTERVAL_HNS = HNS_PER_SEC / TARGET_FPS;
 
 HRESULT InitializeMediaFoundation();
 void ShutdownMediaFoundation();
@@ -22,9 +20,9 @@ struct DXGIDeviceManagerAndUInt {ComPtr<IMFDXGIDeviceManager> deviceManager; UIN
 DXGIDeviceManagerAndUInt CreateDXGIDeviceManager(ID3D11Device* device);
 
 //init encodeur hardware MFT (Vidéo)
-HRESULT InitializeHardwareEncoder(IMFDXGIDeviceManager* pDeviceManager, ComPtr<IMFTransform>& pEncoder, UINT width, UINT height);
+HRESULT InitializeHardwareEncoder(IMFDXGIDeviceManager* pDeviceManager, ComPtr<IMFTransform>& pEncoder, UINT width, UINT height, int fps, int bitrateMbps);
 //envoie une frame au MFT
-HRESULT PushFrameToEncoder(IMFTransform* pEncoder, ID3D11Texture2D* pTexture, LONGLONG hnsTimestamp);
+HRESULT PushFrameToEncoder(IMFTransform* pEncoder, ID3D11Texture2D* pTexture, LONGLONG hnsTimestamp, LONGLONG durationHns);
 
 //init encodeur audio AAC
 HRESULT InitializeAudioEncoder(ComPtr<IMFTransform>& pEncoder, WAVEFORMATEX* pInputFormat);

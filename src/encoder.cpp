@@ -27,7 +27,7 @@ DXGIDeviceManagerAndUInt CreateDXGIDeviceManager(ID3D11Device* device) {
     return {deviceManager, resetToken};
 }
 
-HRESULT InitializeHardwareEncoder(IMFDXGIDeviceManager* pDeviceManager, ComPtr<IMFTransform>& pEncoder, UINT width, UINT height) {
+HRESULT InitializeHardwareEncoder(IMFDXGIDeviceManager* pDeviceManager, ComPtr<IMFTransform>& pEncoder, UINT width, UINT height, int fps, int bitrateMbps) {
     HRESULT hr = S_OK;
     UINT32 count = 0;
     IMFActivate** ppActivate = nullptr;
@@ -54,9 +54,9 @@ HRESULT InitializeHardwareEncoder(IMFDXGIDeviceManager* pDeviceManager, ComPtr<I
     MFCreateMediaType(&pOutputType);
     pOutputType->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
     pOutputType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
-    pOutputType->SetUINT32(MF_MT_AVG_BITRATE, 10 * 1024 * 1024);
+    pOutputType->SetUINT32(MF_MT_AVG_BITRATE, bitrateMbps * 1024 * 1024);
     MFSetAttributeSize(pOutputType.Get(), MF_MT_FRAME_SIZE, width, height);
-    MFSetAttributeRatio(pOutputType.Get(), MF_MT_FRAME_RATE, TARGET_FPS, 1);
+    MFSetAttributeRatio(pOutputType.Get(), MF_MT_FRAME_RATE, fps, 1);
     pOutputType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
     pOutputType->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main);
 
@@ -125,7 +125,7 @@ HRESULT PushAudioToEncoder(IMFTransform* pEncoder, IMFSample* pSample) {
     return pEncoder->ProcessInput(0, pSample, 0);
 }
 
-HRESULT PushFrameToEncoder(IMFTransform* pEncoder, ID3D11Texture2D* pTexture, LONGLONG hnsTimestamp) {
+HRESULT PushFrameToEncoder(IMFTransform* pEncoder, ID3D11Texture2D* pTexture, LONGLONG hnsTimestamp, LONGLONG durationHns) {
     ComPtr<IMFSample> pSample;
     MFCreateSample(&pSample);
     ComPtr<IMFMediaBuffer> pBuffer;
@@ -133,7 +133,7 @@ HRESULT PushFrameToEncoder(IMFTransform* pEncoder, ID3D11Texture2D* pTexture, LO
     pBuffer->SetCurrentLength(0);
     pSample->AddBuffer(pBuffer.Get());
     pSample->SetSampleTime(hnsTimestamp);
-    pSample->SetSampleDuration(TICK_INTERVAL_HNS); 
+    pSample->SetSampleDuration(durationHns); 
     return pEncoder->ProcessInput(0, pSample.Get(), 0);
 }
 

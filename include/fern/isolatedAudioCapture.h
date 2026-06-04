@@ -1,62 +1,69 @@
 #pragma once
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+
 #include <windows.h>
 #include <audioclient.h>
 #include <mmdeviceapi.h>
 #include <wrl/client.h>
 #include <mfapi.h>
 #include <mfidl.h>
-#include <vector>
-#include <thread>
+
 #include <atomic>
+#include <cstdint>
 #include <mutex>
+#include <thread>
+#include <vector>
 
 using Microsoft::WRL::ComPtr;
 
 class IsolatedAudioCapture {
 public:
-
-    IsolatedAudioCapture(DWORD targetPid);
+    explicit IsolatedAudioCapture(DWORD targetPid);
     ~IsolatedAudioCapture();
 
-    //init
     HRESULT Start();
     void Stop();
 
-    //getters
-    WAVEFORMATEX* GetFormat() { return (WAVEFORMATEX*)&m_mixFormat; }
-    void SetStartTime(UINT64 qpc) { m_firstQpcTime = qpc; }
+    WAVEFORMATEX* GetFormat() { return reinterpret_cast<WAVEFORMATEX*>(&m_mixFormat); }
 
-    //recup IMFSample
+    // The caller passes raw QueryPerformanceCounter ticks. Internally the
+    // master clock is stored in the same 100 ns unit used by WASAPI packets.
+    void SetStartTime(UINT64 rawQpc);
+
     HRESULT GetAudioSample(ComPtr<IMFSample>& pSample);
 
 private:
-
-    //gere callback asynchrone de wd
     class CompletionHandler;
 
-    //gestion interne
-    HRESULT InitializeAudioClient();
     void CaptureLoop();
 
-    //propriétés de capture
+    UINT64 HnsToFrame(LONGLONG hns) const;
+    LONGLONG FramesToHns(UINT64 frames) const;
+
+    void AppendSilenceUntilFrameLocked(UINT64 targetFrame);
+    void AppendPacketLocked(const BYTE* data, UINT32 frames, DWORD flags, UINT64 packetQpcHns);
+    void AppendConvertedFramesLocked(const BYTE* data, UINT32 frameOffset, UINT32 frames, DWORD flags);
+
+    bool IsFloatMixFormat() const;
+    bool IsPcmMixFormat() const;
+
     DWORD m_targetPid;
     WAVEFORMATEXTENSIBLE m_mixFormat;
 
-    //interface wasapi
     ComPtr<IAudioClient> m_audioClient;
     ComPtr<IAudioCaptureClient> m_captureClient;
 
-    //threading/synchro
     std::thread m_captureThread;
     std::atomic<bool> m_isCapturing;
-    HANDLE m_sampleReadyEvent;
     HANDLE m_activationFinishedEvent;
-    
-    std::vector<short> m_pcmBuffer; 
+
+    std::vector<short> m_pcmBuffer;
     std::mutex m_audioMutex;
 
-    UINT64 m_firstQpcTime;
+    std::atomic<UINT64> m_masterStartHns;
+    UINT64 m_timelineFramesWritten;
     UINT64 m_framesSent;
-
 };

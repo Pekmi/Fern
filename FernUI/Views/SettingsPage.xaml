@@ -47,11 +47,12 @@
                         </StackPanel>
 
                         <StackPanel>
-                            <TextBlock Text="Fréquence d'images (FPS)" Margin="0,0,0,8"/>
-                            <ComboBox SelectedIndex="1" HorizontalAlignment="Stretch">
-                                <ComboBoxItem Content="30 FPS (Économique)"/>
-                                <ComboBoxItem Content="60 FPS (Fluide)"/>
-                            </ComboBox>
+                            <Grid>
+                                <TextBlock Text="Fréquence d'images (FPS)" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding ElementName=FpsSlider, Path=Value, Converter={StaticResource StringFormatConverter}, ConverterParameter='\{0\} FPS'}" HorizontalAlignment="Right" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </Grid>
+                            <Slider x:Name="FpsSlider" Minimum="10" Maximum="240" StepFrequency="10" TickFrequency="10" Value="60"/>
+                            <TextBlock Text="Une fréquence plus élevée rend la vidéo plus fluide mais demande plus de ressources." Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                         </StackPanel>
 
                         <StackPanel>
