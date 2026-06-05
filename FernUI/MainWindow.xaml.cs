@@ -24,6 +24,8 @@ namespace FernUI
         private readonly DispatcherTimer _daemonStatusTimer = new();
         private bool _isCheckingDaemonStatus;
         private bool? _lastDaemonActive;
+        private bool _isContentFullScreen;
+        private bool _wasWindowFullScreenBeforeContentFullScreen;
 
         public MainWindow()
         {
@@ -137,6 +139,45 @@ namespace FernUI
             }
         }
 
+        public void SetContentFullScreen(bool isFullScreen)
+        {
+            if (_isContentFullScreen == isFullScreen) return;
+
+            _isContentFullScreen = isFullScreen;
+
+            if (isFullScreen)
+            {
+                _wasWindowFullScreenBeforeContentFullScreen = _appWindow.Presenter.Kind == Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen;
+                if (!_wasWindowFullScreenBeforeContentFullScreen)
+                {
+                    _appWindow.SetPresenter(Microsoft.UI.Windowing.AppWindowPresenterKind.FullScreen);
+                }
+
+                AppChromeBar.Visibility = Visibility.Collapsed;
+                NavView.Visibility = Visibility.Collapsed;
+                Grid.SetRow(ContentFrame, 0);
+                Grid.SetColumn(ContentFrame, 0);
+                Grid.SetRowSpan(ContentFrame, 2);
+                Grid.SetColumnSpan(ContentFrame, 2);
+                Canvas.SetZIndex(ContentFrame, 10);
+            }
+            else
+            {
+                if (!_wasWindowFullScreenBeforeContentFullScreen)
+                {
+                    _appWindow.SetPresenter(Microsoft.UI.Windowing.AppWindowPresenterKind.Default);
+                }
+
+                AppChromeBar.Visibility = Visibility.Visible;
+                NavView.Visibility = Visibility.Visible;
+                Grid.SetRow(ContentFrame, 1);
+                Grid.SetColumn(ContentFrame, 1);
+                Grid.SetRowSpan(ContentFrame, 1);
+                Grid.SetColumnSpan(ContentFrame, 1);
+                Canvas.SetZIndex(ContentFrame, 0);
+            }
+        }
+
         private void KeyboardAccelerator_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
         {
             if (sender.Key == Windows.System.VirtualKey.F11)
@@ -149,14 +190,14 @@ namespace FernUI
         private void NavView_Loaded(object sender, RoutedEventArgs e)
         {
             NavView.SelectedItem = NavView.MenuItems[0];
-            ContentFrame.Navigate(typeof(Views.GalleryPage));
+            NavigateTo(typeof(Views.GalleryPage), "Ma Galerie");
         }
 
         private void NavView_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
         {
             if (args.IsSettingsInvoked)
             {
-                ContentFrame.Navigate(typeof(Views.SettingsPage));
+                NavigateTo(typeof(Views.SettingsPage), "Paramètres");
             }
             else if (args.InvokedItemContainer != null)
             {
@@ -164,13 +205,19 @@ namespace FernUI
                 switch (tag)
                 {
                     case "GalleryPage":
-                        ContentFrame.Navigate(typeof(Views.GalleryPage));
+                        NavigateTo(typeof(Views.GalleryPage), "Ma Galerie");
                         break;
                     case "CloudSharesPage":
-                        ContentFrame.Navigate(typeof(Views.CloudSharesPage));
+                        NavigateTo(typeof(Views.CloudSharesPage), "Partages Cloud");
                         break;
                 }
             }
+        }
+
+        private void NavigateTo(Type pageType, string title)
+        {
+            PageTitleText.Text = title;
+            ContentFrame.Navigate(pageType);
         }
     }
 }

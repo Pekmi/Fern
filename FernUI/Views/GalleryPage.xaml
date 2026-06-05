@@ -7,9 +7,13 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
+    Background="Transparent"
     PreviewKeyDown="Page_KeyDown">
 
     <Page.Resources>
+        <SolidColorBrush x:Key="GallerySurfaceBrush" Color="#18FFFFFF"/>
+        <SolidColorBrush x:Key="GalleryMediaSurfaceBrush" Color="#12000000"/>
+
         <DataTemplate x:Key="ClipCardTemplate" x:DataType="models:ClipModel">
             <Grid x:Name="CardRoot" 
                   Margin="0,0,0,16" 
@@ -28,10 +32,10 @@
                 </Grid.RowDefinitions>
 
                 <!-- Zone Media -->
-                <Border CornerRadius="12" Height="{Binding CardHeight}" Background="{ThemeResource LayerFillColorDefaultBrush}">
+                <Border CornerRadius="12" Height="{Binding CardHeight}" Background="{StaticResource GallerySurfaceBrush}">
                     <Grid>
                         <!-- Image Statique -->
-                        <Grid Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}">
+                        <Grid Background="{StaticResource GalleryMediaSurfaceBrush}">
                             <FontIcon Glyph="{Binding ThumbnailIcon}" FontSize="32" Opacity="0.2"/>
                             <Image x:Name="PreviewImageControl"
                                    Source="{Binding PreviewImage}"
@@ -95,7 +99,7 @@
         </DataTemplate>
     </Page.Resources>
 
-    <ScrollViewer Padding="32">
+    <ScrollViewer Padding="32" Background="Transparent">
         <StackPanel>
             <StackPanel.ChildrenTransitions>
                 <TransitionCollection>
@@ -103,9 +107,6 @@
                 </TransitionCollection>
             </StackPanel.ChildrenTransitions>
             
-            <!-- Header -->
-            <TextBlock Text="Ma Galerie" Style="{ThemeResource TitleTextBlockStyle}" FontWeight="Bold" Margin="0,0,0,24"/>
-
             <!-- BANDEAU DE CONTRÔLE (80% Recherche / 20% Date) -->
             <Grid ColumnSpacing="12" Margin="0,0,0,24">
                 <Grid.ColumnDefinitions>
@@ -141,8 +142,8 @@
                     <Storyboard x:Name="ShowTimelineStoryboard">
                         <DoubleAnimation Storyboard.TargetName="TimelinePanel" 
                                          Storyboard.TargetProperty="Height" 
-                                         To="240" 
-                                         Duration="0:0:0.4"
+                                         To="168" 
+                                         Duration="0:0:0.3"
                                          EnableDependentAnimation="True">
                             <DoubleAnimation.EasingFunction>
                                 <CubicEase EasingMode="EaseOut"/>
@@ -164,19 +165,19 @@
                     </Storyboard>
                 </Grid.Resources>
 
-                <Border Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="12" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" Margin="0,0,0,24" Padding="32,24">
+                <Border Background="{StaticResource GallerySurfaceBrush}" CornerRadius="10" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" Margin="0,0,0,18" Padding="24,14">
                     <Grid>
                         <!-- Zone de courbe dynamique (Sera tracée en code-behind) -->
-                        <Canvas x:Name="GraphCanvas" Height="100" VerticalAlignment="Top" Margin="40,0" Opacity="1"/>
+                        <Canvas x:Name="GraphCanvas" Height="60" VerticalAlignment="Top" Margin="32,0" Opacity="1"/>
 
                         <!-- Timeline (Axe) -->
-                        <Grid x:Name="TimelineTrack" Height="100" VerticalAlignment="Bottom" Margin="20,0">
+                        <Grid x:Name="TimelineTrack" Height="72" VerticalAlignment="Bottom" Margin="16,0">
                             <!-- Barre de fond -->
                             <Rectangle Height="2" Fill="{ThemeResource TextFillColorTertiaryBrush}" VerticalAlignment="Center"/>
                             
                             <!-- Zone de sélection colorée et draggable -->
                             <Grid x:Name="SelectedRangeContainer"
-                                  Height="80"
+                                  Height="56"
                                   VerticalAlignment="Center"
                                   HorizontalAlignment="Left"
                                   Background="Transparent"
@@ -188,7 +189,7 @@
                             
                             <Canvas x:Name="TimelineCanvas">
                                 <!-- Point Début -->
-                                <Grid x:Name="StartHandle" Canvas.Left="0" Canvas.Top="30" 
+                                <Grid x:Name="StartHandle" Canvas.Left="0" Canvas.Top="16" 
                                       PointerPressed="Handle_PointerPressed" 
                                       PointerMoved="Handle_PointerMoved" 
                                       PointerReleased="Handle_PointerReleased"
@@ -197,7 +198,7 @@
                                 </Grid>
 
                                 <!-- Point Fin -->
-                                <Grid x:Name="EndHandle" Canvas.Left="800" Canvas.Top="30" 
+                                <Grid x:Name="EndHandle" Canvas.Left="800" Canvas.Top="16" 
                                       PointerPressed="Handle_PointerPressed" 
                                       PointerMoved="Handle_PointerMoved" 
                                       PointerReleased="Handle_PointerReleased"
@@ -206,19 +207,19 @@
                                 </Grid>
 
                                 <TextBlock x:Name="StartDateText"
-                                           Canvas.Top="72"
+                                           Canvas.Top="52"
                                            Width="120"
                                            Text="Début"
-                                           FontSize="11"
+                                           FontSize="10"
                                            TextAlignment="Center"
                                            FontWeight="SemiBold"
                                            IsHitTestVisible="False"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                 <TextBlock x:Name="EndDateText"
-                                           Canvas.Top="72"
+                                           Canvas.Top="52"
                                            Width="120"
                                            Text="Fin"
-                                           FontSize="11"
+                                           FontSize="10"
                                            TextAlignment="Center"
                                            FontWeight="SemiBold"
                                            IsHitTestVisible="False"
@@ -231,7 +232,7 @@
 
             <Border x:Name="EmptyState"
                     Visibility="Collapsed"
-                    Background="{ThemeResource LayerFillColorDefaultBrush}"
+                    Background="{StaticResource GallerySurfaceBrush}"
                     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                     BorderThickness="1"
                     CornerRadius="12"

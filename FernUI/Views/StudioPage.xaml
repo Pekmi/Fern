@@ -13,7 +13,7 @@
         <x:Double x:Key="InfoPanelMaxWidth">450</x:Double>
     </Page.Resources>
 
-    <Grid Padding="32">
+    <Grid x:Name="StudioRoot" Padding="32" Background="Transparent" PointerMoved="StudioRoot_PointerMoved">
         <Grid.ChildrenTransitions>
             <TransitionCollection>
                 <EntranceThemeTransition FromHorizontalOffset="100" />
@@ -26,7 +26,7 @@
         </Grid.RowDefinitions>
 
         <!-- Header -->
-        <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,24">
+        <StackPanel x:Name="HeaderPanel" Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,24">
             <Button x:Name="BackButton" Click="BackButton_Click" 
                     Style="{ThemeResource NavigationBackButtonNormalStyle}" 
                     ToolTipService.ToolTip="Retour à la Galerie"
@@ -35,16 +35,23 @@
                        Style="{ThemeResource TitleTextBlockStyle}" FontWeight="Bold"/>
         </StackPanel>
 
-        <Grid Grid.Row="1">
+        <Grid x:Name="WorkspaceGrid" Grid.Row="1">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition MinWidth="500"/>
-                <ColumnDefinition Width="300" MinWidth="200" MaxWidth="400"/>
+                <ColumnDefinition x:Name="PlayerColumn" MinWidth="500"/>
+                <ColumnDefinition x:Name="InfoColumn" Width="300" MinWidth="200" MaxWidth="400"/>
             </Grid.ColumnDefinitions>
 
             <!-- COLONNE GAUCHE : Lecteur Vidéo -->
-            <Grid Grid.Column="0" Margin="0,0,24,0">
+            <Grid x:Name="PlayerPanel" Grid.Column="0" Margin="0,0,24,0">
                 <!-- All content (Video + Controls) is now in a single scaling block -->
-                <Viewbox Stretch="Uniform" VerticalAlignment="Center" HorizontalAlignment="Center">
+                <Viewbox x:Name="PlayerViewbox"
+                         Stretch="Uniform"
+                         VerticalAlignment="Center"
+                         HorizontalAlignment="Center"
+                         RenderTransformOrigin="0.5,0.5">
+                    <Viewbox.RenderTransform>
+                        <CompositeTransform/>
+                    </Viewbox.RenderTransform>
                     <Grid Width="1920">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
@@ -53,15 +60,20 @@
 
                         <!-- Video (Top Rounded) -->
                         <Border Grid.Row="0" Background="Black" CornerRadius="12,12,0,0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1,1,1,0">
-                            <MediaPlayerElement x:Name="StudioPlayer"
-                                                Width="1920" Height="1080"
-                                                AreTransportControlsEnabled="False"
-                                                AutoPlay="False"
-                                                Stretch="Uniform"/>
+                            <Grid Width="1920" Height="1080">
+                                <MediaPlayerElement x:Name="StudioPlayer"
+                                                    AreTransportControlsEnabled="False"
+                                                    AutoPlay="False"
+                                                    Stretch="Uniform"/>
+                                <Border Background="Transparent"
+                                        Tapped="VideoSurface_Tapped"
+                                        DoubleTapped="VideoSurface_DoubleTapped"
+                                        ToolTipService.ToolTip="Lecture / pause"/>
+                            </Grid>
                         </Border>
 
                         <!-- Custom Controls (Stuck to Video, Sharp Corners) -->
-                        <Border Grid.Row="1" Background="#CC000000" Height="96" CornerRadius="0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                        <Border x:Name="ControlsPanel" Grid.Row="1" Background="#CC000000" Height="96" CornerRadius="0" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                             <Grid Margin="24,0">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto"/> <!-- Play/Pause -->
@@ -111,7 +123,7 @@
                                         VerticalAlignment="Center"
                                         Background="Transparent" BorderThickness="0"
                                         Width="64" Height="64">
-                                    <FontIcon Glyph="&#xE740;" FontSize="24" Foreground="White" VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                                    <FontIcon x:Name="FullscreenIcon" Glyph="&#xE740;" FontSize="24" Foreground="White" VerticalAlignment="Center" HorizontalAlignment="Center"/>
                                 </Button>
                             </Grid>
                         </Border>
@@ -120,7 +132,7 @@
             </Grid>
 
             <!-- COLONNE DROITE : Mixage & Infos -->
-            <Grid Grid.Column="1">
+            <Grid x:Name="InfoPanel" Grid.Column="1">
                 <Border Background="{ThemeResource LayerFillColorDefaultBrush}" 
                         CornerRadius="12" Padding="24" 
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" 

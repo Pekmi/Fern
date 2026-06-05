@@ -26,14 +26,10 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <!-- TITRE -->
-            <TextBlock Text="Paramètres" Style="{ThemeResource TitleTextBlockStyle}" FontWeight="Bold" Grid.ColumnSpan="2" Margin="0,0,0,8"/>
-
             <!-- SECTION MOTEUR VIDÉO (Colonne Gauche, Haute) -->
-            <StackPanel Grid.Row="1" Grid.Column="0" Grid.RowSpan="2">
+            <StackPanel Grid.Row="0" Grid.Column="0" Grid.RowSpan="2">
                 <TextBlock Text="Moteur Vidéo &amp; Audio" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,0,0,12"/>
                 <Border Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="12" Padding="24" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <StackPanel Spacing="24">
@@ -68,7 +64,7 @@
             </StackPanel>
 
             <!-- SECTION RACCOURCIS & CHEMINS (Colonne Droite, Haut) -->
-            <StackPanel Grid.Row="1" Grid.Column="1">
+            <StackPanel Grid.Row="0" Grid.Column="1">
                 <TextBlock Text="Raccourcis &amp; Chemins" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,0,0,12"/>
                 <Border Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="12" Padding="24" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <StackPanel Spacing="24">
@@ -98,7 +94,7 @@
             </StackPanel>
 
             <!-- SECTION IA (Colonne Droite, Milieu) -->
-            <StackPanel Grid.Row="2" Grid.Column="1" VerticalAlignment="Top">
+            <StackPanel Grid.Row="1" Grid.Column="1" VerticalAlignment="Top">
                 <TextBlock Text="Intelligence Artificielle" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,0,0,12"/>
                 <Border Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="12" Padding="24" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <StackPanel Spacing="12">

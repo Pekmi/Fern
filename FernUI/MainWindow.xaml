@@ -13,66 +13,139 @@
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <NavigationView x:Name="NavView" 
-                    Loaded="NavView_Loaded"
-                    ItemInvoked="NavView_ItemInvoked"
-                    PaneDisplayMode="LeftCompact"
-                    IsPaneOpen="False"
-                    IsSettingsVisible="True">
-        <NavigationView.KeyboardAccelerators>
-            <KeyboardAccelerator Key="F11" Invoked="KeyboardAccelerator_Invoked" />
-        </NavigationView.KeyboardAccelerators>
-        <NavigationView.PaneHeader>
-            <StackPanel Orientation="Horizontal">
-                <Button x:Name="FullScreenButton" 
-                        Click="FullScreenButton_Click"
-                        ToolTipService.ToolTip="Plein Écran (F11)"
-                        Background="Transparent" 
-                        BorderBrush="Transparent"
-                        Width="40" Height="40" Margin="4,4,0,0">
-                    <FontIcon Glyph="&#xE740;" FontSize="16"/>
-                </Button>
-                <Button x:Name="CaptureButton" 
-                        Click="CaptureButton_Click"
-                        ToolTipService.ToolTip="Capturer Clip (Daemon)"
-                        Background="Transparent" 
-                        BorderBrush="Transparent"
-                        Width="40" Height="40" Margin="4,4,0,0">
-                    <FontIcon Glyph="&#xE7AD;" FontSize="16"/>
-                </Button>
-            </StackPanel>
-        </NavigationView.PaneHeader>
-        <NavigationView.Transitions>
-            <TransitionCollection>
-                <EntranceThemeTransition FromHorizontalOffset="48" />
-            </TransitionCollection>
-        </NavigationView.Transitions>
-        
-        <NavigationView.MenuItems>
-            <NavigationViewItem Content="Galerie" Icon="Pictures" Tag="GalleryPage" />
-            <NavigationViewItem Content="Partages Cloud" Tag="CloudSharesPage">
-                <NavigationViewItem.Icon>
-                    <FontIcon Glyph="&#xE753;"/>
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-        </NavigationView.MenuItems>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="56"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="56"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
 
-        <NavigationView.FooterMenuItems>
-            <NavigationViewItem x:Name="DaemonStatusItem"
-                                Content="Daemon inactif"
-                                Tag="DaemonStatus"
-                                SelectsOnInvoked="False"
-                                ToolTipService.ToolTip="Daemon inactif">
-                <NavigationViewItem.Icon>
-                    <FontIcon x:Name="DaemonStatusIcon"
-                              Glyph="&#xF137;"
-                              Foreground="#FFE5484D"
-                              FontSize="12"/>
-                </NavigationViewItem.Icon>
-            </NavigationViewItem>
-        </NavigationView.FooterMenuItems>
+        <Border Grid.Row="0"
+                Grid.Column="0"
+                Grid.ColumnSpan="2"
+                Background="{ThemeResource LayerOnMicaBaseAltFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                BorderThickness="0,0,0,1"/>
 
-        <Frame x:Name="ContentFrame" Margin="0,0,0,0">
+        <Border Grid.Row="1"
+                Grid.Column="0"
+                Background="{ThemeResource LayerOnMicaBaseAltFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}"
+                BorderThickness="0,0,1,0"/>
+
+        <Grid x:Name="AppChromeBar"
+              Grid.Row="0"
+              Grid.Column="0"
+              Grid.ColumnSpan="2"
+              Padding="0,0,140,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="56"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0"
+                    Width="32"
+                    Height="32"
+                    CornerRadius="8"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    Background="{ThemeResource SystemControlBackgroundAccentBrush}">
+                <TextBlock Text="F"
+                           FontSize="16"
+                           FontWeight="SemiBold"
+                           Foreground="White"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"/>
+            </Border>
+
+            <TextBlock x:Name="PageTitleText"
+                       Grid.Column="1"
+                       Text="Ma Galerie"
+                       Style="{ThemeResource SubtitleTextBlockStyle}"
+                       FontWeight="SemiBold"
+                       VerticalAlignment="Center"
+                       Margin="24,0,0,0"/>
+
+            <Button x:Name="CaptureButton"
+                    Grid.Column="2"
+                    Click="CaptureButton_Click"
+                    ToolTipService.ToolTip="Capturer Clip (Daemon)"
+                    Background="Transparent"
+                    BorderBrush="Transparent"
+                    Width="40"
+                    Height="40"
+                    Margin="0,0,4,0"
+                    VerticalAlignment="Center">
+                <FontIcon Glyph="&#xE7AD;" FontSize="16"/>
+            </Button>
+
+            <Button x:Name="FullScreenButton"
+                    Grid.Column="3"
+                    Click="FullScreenButton_Click"
+                    ToolTipService.ToolTip="Plein Écran (F11)"
+                    Background="Transparent"
+                    BorderBrush="Transparent"
+                    Width="40"
+                    Height="40"
+                    Margin="0,0,8,0"
+                    VerticalAlignment="Center">
+                <FontIcon Glyph="&#xE740;" FontSize="16"/>
+            </Button>
+        </Grid>
+
+        <NavigationView x:Name="NavView"
+                        Grid.Row="1"
+                        Grid.Column="0"
+                        Loaded="NavView_Loaded"
+                        ItemInvoked="NavView_ItemInvoked"
+                        PaneDisplayMode="LeftCompact"
+                        CompactPaneLength="56"
+                        OpenPaneLength="220"
+                        IsPaneOpen="False"
+                        IsPaneToggleButtonVisible="False"
+                        IsBackButtonVisible="Collapsed"
+                        IsSettingsVisible="True"
+                        Background="Transparent">
+            <NavigationView.KeyboardAccelerators>
+                <KeyboardAccelerator Key="F11" Invoked="KeyboardAccelerator_Invoked" />
+            </NavigationView.KeyboardAccelerators>
+            <NavigationView.Transitions>
+                <TransitionCollection>
+                    <EntranceThemeTransition FromHorizontalOffset="48" />
+                </TransitionCollection>
+            </NavigationView.Transitions>
+            
+            <NavigationView.MenuItems>
+                <NavigationViewItem Content="Galerie" Icon="Pictures" Tag="GalleryPage" />
+                <NavigationViewItem Content="Partages Cloud" Tag="CloudSharesPage">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE753;"/>
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
+
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem x:Name="DaemonStatusItem"
+                                    Content="Daemon inactif"
+                                    Tag="DaemonStatus"
+                                    SelectsOnInvoked="False"
+                                    ToolTipService.ToolTip="Daemon inactif">
+                    <NavigationViewItem.Icon>
+                        <FontIcon x:Name="DaemonStatusIcon"
+                                  Glyph="&#xF137;"
+                                  Foreground="#FFE5484D"
+                                  FontSize="12"/>
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.FooterMenuItems>
+        </NavigationView>
+
+        <Frame x:Name="ContentFrame" Grid.Row="1" Grid.Column="1" Margin="0,0,0,0">
             <Frame.ContentTransitions>
                 <TransitionCollection>
                     <NavigationThemeTransition>
@@ -81,5 +154,23 @@
                 </TransitionCollection>
             </Frame.ContentTransitions>
         </Frame>
-    </NavigationView>
+
+        <Border Grid.Row="1"
+                Grid.Column="1"
+                Width="24"
+                Height="24"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                Background="{ThemeResource LayerOnMicaBaseAltFillColorDefaultBrush}"
+                IsHitTestVisible="False"/>
+        <Border Grid.Row="1"
+                Grid.Column="1"
+                Width="24"
+                Height="24"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
+                CornerRadius="24,0,0,0"
+                IsHitTestVisible="False"/>
+    </Grid>
 </Window>
