@@ -9,11 +9,12 @@
 #include "../include/fern/capture_feedback.h"
 #include "../include/fern/clock.h"
 #include "../include/fern/encoder.h"
-#include "../include/fern/isolatedAudioCapture.h"
 #include "../include/fern/ipc_server.h"
+#include "../include/fern/multi_app_audio_capture.h"
 #include "../include/fern/replay_export.h"
 
 #include <d3d11.h>
+#include <d3d11_4.h>
 #include <dxgi1_2.h>
 #include <mferror.h>
 #include <windows.h>
@@ -30,6 +31,95 @@ namespace {
 
 constexpr int kMaxCatchUpFramesPerLoop = 4;
 constexpr LONGLONG kSaveAudioSettleHns = 2500000LL;
+
+struct DesktopCaptureTarget {
+    D3D11Context d3d;
+    ComPtr<IDXGIOutputDuplication> duplication;
+    DXGI_OUTDUPL_DESC duplicationDesc{};
+};
+
+void EnableD3D11MultithreadProtection(ID3D11Device* device) {
+    if (!device) return;
+
+    ComPtr<ID3D11Multithread> multithread;
+    if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&multithread))) && multithread) {
+        multithread->SetMultithreadProtected(TRUE);
+    }
+}
+
+HRESULT CreateD3D11DeviceForAdapter(IDXGIAdapter1* adapter, D3D11Context& d3d) {
+    d3d = {};
+    if (!adapter) return E_POINTER;
+
+    D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_0;
+    const UINT creationFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT;
+
+    HRESULT hr = D3D11CreateDevice(
+        adapter,
+        D3D_DRIVER_TYPE_UNKNOWN,
+        nullptr,
+        creationFlags,
+        nullptr,
+        0,
+        D3D11_SDK_VERSION,
+        &d3d.device,
+        &featureLevel,
+        &d3d.deviceContext);
+
+    if (SUCCEEDED(hr)) {
+        EnableD3D11MultithreadProtection(d3d.device.Get());
+    }
+
+    return hr;
+}
+
+bool TryCreateDesktopCaptureTarget(DesktopCaptureTarget& target) {
+    target = {};
+
+    auto factory = getFactory1();
+    auto adapters = getAdapters1(factory.Get());
+    if (adapters.empty()) {
+        std::cerr << "DXGI: no adapter found." << std::endl;
+        return false;
+    }
+
+    for (const auto& adapter : adapters) {
+        if (!adapter) continue;
+
+        auto outputs = getOutputs1(adapter.Get());
+        if (outputs.empty()) continue;
+
+        D3D11Context d3d;
+        HRESULT hr = CreateD3D11DeviceForAdapter(adapter.Get(), d3d);
+        if (FAILED(hr) || !d3d.device || !d3d.deviceContext) {
+            DXGI_ADAPTER_DESC1 adapterDesc{};
+            adapter->GetDesc1(&adapterDesc);
+            std::wcerr << L"D3D11: device creation failed for " << adapterDesc.Description
+                       << L" 0x" << std::hex << hr << std::dec << std::endl;
+            continue;
+        }
+
+        for (const auto& output : outputs) {
+            if (!output) continue;
+
+            ComPtr<IDXGIOutputDuplication> duplication;
+            hr = output->DuplicateOutput(d3d.device.Get(), &duplication);
+            if (SUCCEEDED(hr) && duplication) {
+                duplication->GetDesc(&target.duplicationDesc);
+                target.d3d = d3d;
+                target.duplication = duplication;
+                return true;
+            }
+
+            DXGI_OUTPUT_DESC outputDesc{};
+            output->GetDesc(&outputDesc);
+            std::wcerr << L"DXGI: DuplicateOutput failed for " << outputDesc.DeviceName
+                       << L" 0x" << std::hex << hr << std::dec << std::endl;
+        }
+    }
+
+    return false;
+}
 
 bool TryUpdateDesktopFrame(IDXGIOutputDuplication* duplication, ID3D11DeviceContext* context, ID3D11Texture2D* target) {
     if (!duplication || !context || !target) return false;
@@ -65,36 +155,6 @@ void ClearTexture(ID3D11Device* device, ID3D11DeviceContext* context, ID3D11Text
     if (SUCCEEDED(device->CreateRenderTargetView(texture, nullptr, &rtv)) && rtv) {
         const FLOAT black[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
         context->ClearRenderTargetView(rtv.Get(), black);
-    }
-}
-
-void DrainAudioEncoder(IMFTransform* encoder, RingBuffer& ringBuffer) {
-    if (!encoder) return;
-
-    for (;;) {
-        ComPtr<IMFSample> output;
-        HRESULT hr = PullSampleFromEncoder(encoder, output);
-        if (hr != S_OK || !output) break;
-        ringBuffer.AddSample(output.Get(), 1);
-    }
-}
-
-void PumpAudio(IsolatedAudioCapture& audioCapture, IMFTransform* encoder, RingBuffer& ringBuffer) {
-    if (!encoder) return;
-
-    for (int i = 0; i < 8; ++i) {
-        ComPtr<IMFSample> input;
-        HRESULT hr = audioCapture.GetAudioSample(input);
-        if (hr != S_OK || !input) break;
-
-        hr = PushAudioToEncoder(encoder, input.Get());
-        if (hr == MF_E_NOTACCEPTING) break;
-        if (FAILED(hr)) {
-            std::cerr << "AUDIO: ProcessInput failed 0x" << std::hex << hr << std::dec << std::endl;
-            break;
-        }
-
-        DrainAudioEncoder(encoder, ringBuffer);
     }
 }
 
@@ -153,17 +213,15 @@ void WaitBriefly(HANDLE timer, LONGLONG nowHns, LONGLONG nextFrameDueHns) {
 void StartAsyncSave(
     RingBuffer& ringBuffer,
     IMFTransform* videoEncoder,
-    IMFTransform* audioEncoder,
+    const MultiAppAudioCapture& audioCapture,
     const std::wstring& storagePath,
     LONGLONG exportEndHns) {
     ComPtr<IMFMediaType> videoType;
-    ComPtr<IMFMediaType> audioType;
     videoEncoder->GetOutputCurrentType(0, &videoType);
 
     std::vector<ComPtr<IMFMediaType>> types = { videoType };
-    if (audioEncoder && SUCCEEDED(audioEncoder->GetOutputCurrentType(0, &audioType)) && audioType) {
-        types.push_back(audioType);
-    }
+    audioCapture.AppendOutputTypes(types);
+    std::vector<AudioTrackMetadata> audioTrackMetadata = audioCapture.GetTrackMetadata();
 
     wchar_t timestamp[64] = {};
     auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
@@ -172,39 +230,21 @@ void StartAsyncSave(
     wcsftime(timestamp, 64, L"clip_%Y%m%d_%H%M%S.mp4", &localTime);
 
     const std::filesystem::path clipPath = std::filesystem::path(storagePath) / timestamp;
-    std::thread(AsyncSaveWorker, ringBuffer.GetSnapshot(), types, clipPath.wstring(), exportEndHns).detach();
+    std::thread(AsyncSaveWorker, ringBuffer.GetSnapshot(), types, audioTrackMetadata, clipPath.wstring(), exportEndHns).detach();
 }
 
 }
 
 void RunCaptureSession(const Settings& settings) {
-    D3D11Context d3d = GetD3D11Device();
-    if (!d3d.device || !d3d.deviceContext) {
-        std::cerr << "D3D11: device creation failed." << std::endl;
-        return;
-    }
-
-    auto factory = getFactory1();
-    auto adapters = getAdapters1(factory.Get());
-    if (adapters.empty()) {
-        std::cerr << "DXGI: no adapter found." << std::endl;
-        return;
-    }
-
-    auto outputs = getOutputs1(adapters[0].Get());
-    if (outputs.empty()) {
-        std::cerr << "DXGI: no output found." << std::endl;
-        return;
-    }
-
-    auto outputDuplication = getOutputDuplication(d3d.device.Get(), outputs[0].Get());
-    if (!outputDuplication) {
+    DesktopCaptureTarget captureTarget;
+    if (!TryCreateDesktopCaptureTarget(captureTarget)) {
         std::cerr << "DXGI: DuplicateOutput failed." << std::endl;
         return;
     }
 
-    DXGI_OUTDUPL_DESC duplicationDesc{};
-    outputDuplication->GetDesc(&duplicationDesc);
+    D3D11Context d3d = captureTarget.d3d;
+    auto outputDuplication = captureTarget.duplication;
+    DXGI_OUTDUPL_DESC duplicationDesc = captureTarget.duplicationDesc;
 
     auto dxgiDeviceManager = CreateDXGIDeviceManager(d3d.device.Get());
     if (!dxgiDeviceManager.deviceManager) {
@@ -245,16 +285,10 @@ void RunCaptureSession(const Settings& settings) {
 
     RingBuffer ringBuffer(static_cast<LONGLONG>(settings.bufferDuration) * HnsPerSecond);
 
-    IsolatedAudioCapture audioCapture(0);
-    ComPtr<IMFTransform> audioEncoder;
-    if (SUCCEEDED(audioCapture.Start())) {
-        hr = InitializeAudioEncoder(audioEncoder, audioCapture.GetFormat());
-        if (FAILED(hr)) {
-            std::cerr << "AUDIO: encoder init failed 0x" << std::hex << hr << std::dec << std::endl;
-            audioEncoder.Reset();
-        }
-    } else {
-        std::cerr << "AUDIO: capture disabled." << std::endl;
+    MultiAppAudioCapture audioCapture;
+    hr = audioCapture.Start();
+    if (FAILED(hr)) {
+        std::cerr << "AUDIO: multi-app capture disabled 0x" << std::hex << hr << std::dec << std::endl;
     }
 
     ComPtr<IMFMediaEventGenerator> videoEventGen;
@@ -262,10 +296,6 @@ void RunCaptureSession(const Settings& settings) {
 
     videoEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
     videoEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
-    if (audioEncoder) {
-        audioEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
-        audioEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
-    }
 
     LARGE_INTEGER startQpc{};
     QueryPerformanceCounter(&startQpc);
@@ -282,7 +312,7 @@ void RunCaptureSession(const Settings& settings) {
     std::cout << "Capture Fern active (" << settings.fps << " FPS). F9 pour sauvegarder." << std::endl;
 
     while (running) {
-        PumpAudio(audioCapture, audioEncoder.Get(), ringBuffer);
+        audioCapture.Pump(ringBuffer);
         DrainVideoEncoder(videoEncoder.Get(), videoEventGen.Get(), ringBuffer, framesProduced, settings.fps);
 
         LONGLONG nowHns = CurrentQpcHns();
@@ -317,9 +347,9 @@ void RunCaptureSession(const Settings& settings) {
         }
 
         if (pendingSave && CurrentQpcHns() >= pendingSaveReadyHns) {
-            PumpAudio(audioCapture, audioEncoder.Get(), ringBuffer);
+            audioCapture.Pump(ringBuffer);
             DrainVideoEncoder(videoEncoder.Get(), videoEventGen.Get(), ringBuffer, framesProduced, settings.fps);
-            StartAsyncSave(ringBuffer, videoEncoder.Get(), audioEncoder.Get(), settings.storagePath, pendingSaveEndHns);
+            StartAsyncSave(ringBuffer, videoEncoder.Get(), audioCapture, settings.storagePath, pendingSaveEndHns);
             pendingSave = false;
         }
 
@@ -328,6 +358,7 @@ void RunCaptureSession(const Settings& settings) {
     }
 
     if (frameTimer) CloseHandle(frameTimer);
+    audioCapture.Stop();
 }
 
 }

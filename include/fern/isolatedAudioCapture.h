@@ -11,6 +11,8 @@
 #include <mfapi.h>
 #include <mfidl.h>
 
+#include "audio_activity.h"
+
 #include <atomic>
 #include <cstdint>
 #include <mutex>
@@ -31,9 +33,10 @@ public:
 
     // The caller passes raw QueryPerformanceCounter ticks. Internally the
     // master clock is stored in the same 100 ns unit used by WASAPI packets.
-    void SetStartTime(UINT64 rawQpc);
+    void SetStartTime(UINT64 rawQpc, LONGLONG timelineOffsetHns = 0);
 
     HRESULT GetAudioSample(ComPtr<IMFSample>& pSample);
+    std::vector<fern::AudioActivityRange> GetActivityRanges();
 
 private:
     class CompletionHandler;
@@ -46,6 +49,8 @@ private:
     void AppendSilenceUntilFrameLocked(UINT64 targetFrame);
     void AppendPacketLocked(const BYTE* data, UINT32 frames, DWORD flags, UINT64 packetQpcHns);
     void AppendConvertedFramesLocked(const BYTE* data, UINT32 frameOffset, UINT32 frames, DWORD flags);
+    void RecordActivityLocked(UINT64 startFrame, const short* samples, UINT32 frames);
+    void AddActivityRangeLocked(UINT64 startFrame, UINT64 frames);
 
     bool IsFloatMixFormat() const;
     bool IsPcmMixFormat() const;
@@ -66,4 +71,5 @@ private:
     std::atomic<UINT64> m_masterStartHns;
     UINT64 m_timelineFramesWritten;
     UINT64 m_framesSent;
+    std::vector<fern::AudioActivityRange> m_activityRanges;
 };

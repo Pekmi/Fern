@@ -3,6 +3,7 @@
 #include <mfreadwrite.h>
 #include <mferror.h>
 #include <iostream>
+#include <limits>
 
 #include "../include/fern/buffer.h"
 
@@ -70,6 +71,11 @@ HRESULT RingBuffer::SaveToFile(LPCWSTR pwszFileName, const std::vector<ComPtr<IM
 
     std::vector<DWORD> sinkStreamIndices;
     for (size_t i = 0; i < pMediaTypes.size(); ++i) {
+        if (!pMediaTypes[i]) {
+            sinkStreamIndices.push_back((std::numeric_limits<DWORD>::max)());
+            continue;
+        }
+
         DWORD dwIndex = 0;
         hr = pSinkWriter->AddStream(pMediaTypes[i].Get(), &dwIndex);
         if (FAILED(hr)) return hr;
@@ -82,6 +88,9 @@ HRESULT RingBuffer::SaveToFile(LPCWSTR pwszFileName, const std::vector<ComPtr<IM
     LONGLONG hnsOffset = -1;
 
     for (auto& ss : m_samples) {
+        if (ss.streamIndex >= sinkStreamIndices.size()) continue;
+        if (sinkStreamIndices[ss.streamIndex] == (std::numeric_limits<DWORD>::max)()) continue;
+
         LONGLONG hnsTime = 0;
         ss.sample->GetSampleTime(&hnsTime);
         if (hnsOffset == -1) hnsOffset = hnsTime;

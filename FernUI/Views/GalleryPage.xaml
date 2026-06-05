@@ -58,20 +58,6 @@
                                 CornerRadius="12"
                                 Opacity="0"/>
                         
-                        <!-- Player Video -->
-                        <MediaPlayerElement x:Name="HoverPlayer" 
-                                            AreTransportControlsEnabled="False" 
-                                            AutoPlay="False"
-                                            Source="{Binding VideoUrl}"
-                                            Opacity="0"
-                                            Stretch="UniformToFill">
-                            <MediaPlayerElement.Transitions>
-                                <TransitionCollection>
-                                    <EntranceThemeTransition />
-                                </TransitionCollection>
-                            </MediaPlayerElement.Transitions>
-                        </MediaPlayerElement>
-
                         <!-- CORRECTIF BADGE DURÉE -->
                         <Border x:Name="DurationBadge" 
                                 Visibility="{Binding DurationVisibility}"

@@ -17,7 +17,9 @@ add_executable(Fern WIN32
     src/hotkey.cpp
     src/dump.cpp
     src/replay_export.cpp
+    src/multi_app_audio_capture.cpp
     src/isolatedAudioCapture.cpp
+    include/fern/audio_activity.h
     include/fern/clock.h
     include/fern/capture_feedback.h
     include/fern/capture_session.h
@@ -29,6 +31,7 @@ add_executable(Fern WIN32
     include/fern/hotkey.h
     include/fern/dump.h
     include/fern/replay_export.h
+    include/fern/multi_app_audio_capture.h
     include/fern/isolatedAudioCapture.h)
 
 target_link_libraries(Fern d3d11 dxgi mfplat mfuuid mfreadwrite mmdevapi RuntimeObject shell32 ole32 winmm user32 gdi32)

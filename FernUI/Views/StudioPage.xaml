@@ -97,6 +97,7 @@
                                         Grid.Column="1" 
                                         Margin="32,0" 
                                         VerticalAlignment="Center"
+                                        StepFrequency="0.001"
                                         ValueChanged="ProgressSlider_ValueChanged"
                                         Foreground="{ThemeResource SystemControlHighlightAccentBrush}"/>
 

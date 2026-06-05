@@ -8,14 +8,282 @@
 #include <mfreadwrite.h>
 #include <windows.h>
 #include <algorithm>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
+#include <sstream>
 
 #include "../include/fern/replay_export.h"
 
 
 namespace fern {
 namespace {
+
+constexpr LONGLONG kMinimumTrackActiveHns = 1000000LL;
+
+HRESULT CloneSampleForExport(IMFSample* source, ComPtr<IMFSample>& clone);
+bool TryGetSampleTime(const StreamSample& sample, LONGLONG& time);
+LONGLONG RelativeHns(LONGLONG value, LONGLONG offset);
+void ClampDecodeTimestamp(IMFSample* sample, LONGLONG exportStart, LONGLONG& lastDts);
+
+std::string WideToUtf8(const std::wstring& value) {
+    if (value.empty()) return "";
+
+    const int size = WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (size <= 1) return "";
+
+    std::string result(static_cast<size_t>(size - 1), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, result.data(), size, nullptr, nullptr);
+    return result;
+}
+
+std::string JsonEscape(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size() + 8);
+
+    for (unsigned char ch : value) {
+        switch (ch) {
+        case '\\': escaped += "\\\\"; break;
+        case '"': escaped += "\\\""; break;
+        case '\b': escaped += "\\b"; break;
+        case '\f': escaped += "\\f"; break;
+        case '\n': escaped += "\\n"; break;
+        case '\r': escaped += "\\r"; break;
+        case '\t': escaped += "\\t"; break;
+        default:
+            if (ch < 0x20) {
+                constexpr char hex[] = "0123456789abcdef";
+                escaped += "\\u00";
+                escaped += hex[(ch >> 4) & 0xF];
+                escaped += hex[ch & 0xF];
+            } else {
+                escaped += static_cast<char>(ch);
+            }
+            break;
+        }
+    }
+
+    return escaped;
+}
+
+std::string BuildAudioTrackManifestJson(
+    const std::vector<AudioTrackMetadata>& audioTrackMetadata,
+    const std::vector<DWORD>& sinkStreamIndices) {
+    std::ostringstream json;
+
+    json << "{\n";
+    json << "  \"version\": 2,\n";
+    json << "  \"package\": \"fern\",\n";
+    json << "  \"tracks\": [\n";
+
+    std::vector<int> audioIndexByStream(sinkStreamIndices.size(), -1);
+    int nextAudioIndex = 0;
+    for (size_t i = 1; i < sinkStreamIndices.size(); ++i) {
+        if (sinkStreamIndices[i] == std::numeric_limits<DWORD>::max()) continue;
+        audioIndexByStream[i] = nextAudioIndex++;
+    }
+
+    bool first = true;
+    for (const auto& track : audioTrackMetadata) {
+        if (track.streamIndex == 0 || track.streamIndex >= sinkStreamIndices.size()) continue;
+        if (sinkStreamIndices[track.streamIndex] == std::numeric_limits<DWORD>::max()) continue;
+        const int audioIndex = audioIndexByStream[track.streamIndex];
+        if (audioIndex < 0) continue;
+
+        if (!first) json << ",\n";
+        first = false;
+
+        json << "    {";
+        json << "\"streamIndex\": " << track.streamIndex << ", ";
+        json << "\"audioIndex\": " << audioIndex << ", ";
+        json << "\"pid\": " << track.pid << ", ";
+        json << "\"name\": \"" << JsonEscape(WideToUtf8(track.name)) << "\", ";
+        json << "\"activeDurationHns\": " << track.activeDurationHns << ", ";
+        json << "\"activeRatio\": " << track.activeRatio;
+        json << "}";
+    }
+
+    json << "\n";
+    json << "  ]\n";
+    json << "}\n";
+    return json.str();
+}
+
+LONGLONG ClippedRangeDurationHns(const AudioActivityRange& range, LONGLONG exportStart, LONGLONG exportEnd) {
+    const LONGLONG start = std::max(range.startHns, exportStart);
+    const LONGLONG end = std::min(range.startHns + range.durationHns, exportEnd);
+    return end > start ? end - start : 0;
+}
+
+LONGLONG CalculateActiveDurationHns(const std::vector<AudioActivityRange>& ranges, LONGLONG exportStart, LONGLONG exportEnd) {
+    LONGLONG activeDuration = 0;
+    for (const auto& range : ranges) {
+        activeDuration += ClippedRangeDurationHns(range, exportStart, exportEnd);
+    }
+    return activeDuration;
+}
+
+void PrepareAudioTracksForExport(
+    std::vector<ComPtr<IMFMediaType>>& types,
+    std::vector<AudioTrackMetadata>& audioTrackMetadata,
+    LONGLONG exportStart,
+    LONGLONG exportEnd) {
+    const LONGLONG exportDuration = std::max<LONGLONG>(1, exportEnd - exportStart);
+
+    for (auto& track : audioTrackMetadata) {
+        track.activeDurationHns = CalculateActiveDurationHns(track.activityRanges, exportStart, exportEnd);
+        track.activeRatio = static_cast<double>(track.activeDurationHns) / static_cast<double>(exportDuration);
+
+        if (track.streamIndex == 0 || track.streamIndex >= types.size()) continue;
+        if (track.activeDurationHns < kMinimumTrackActiveHns) {
+            types[track.streamIndex].Reset();
+        }
+    }
+}
+
+std::wstring BuildAudioBundleFilename(const std::wstring& filename) {
+    const std::filesystem::path clipPath(filename);
+    const std::wstring stem = clipPath.stem().wstring();
+    return (clipPath.parent_path() / (stem + L".fern_audio.tmp.mp4")).wstring();
+}
+
+std::wstring BuildFernPackageFilename(const std::wstring& filename) {
+    return std::filesystem::path(filename).replace_extension(L".fern").wstring();
+}
+
+bool WriteAudioBundle(
+    const std::vector<StreamSample>& sortedSamples,
+    const std::vector<ComPtr<IMFMediaType>>& types,
+    const std::vector<DWORD>& sinkStreamIndices,
+    const std::wstring& bundleFilename,
+    LONGLONG exportStart,
+    LONGLONG exportEnd,
+    IMFAttributes* attributes) {
+    std::vector<DWORD> bundleStreamIndices(types.size(), std::numeric_limits<DWORD>::max());
+
+    ComPtr<IMFSinkWriter> writer;
+    HRESULT hr = MFCreateSinkWriterFromURL(bundleFilename.c_str(), nullptr, attributes, &writer);
+    if (FAILED(hr) || !writer) {
+        std::wcerr << L"SAVE: audio bundle writer failed " << bundleFilename
+                   << L" 0x" << std::hex << hr << std::dec << std::endl;
+        return false;
+    }
+
+    int audioStreamCount = 0;
+    for (size_t streamIndex = 1; streamIndex < sinkStreamIndices.size(); ++streamIndex) {
+        if (sinkStreamIndices[streamIndex] == std::numeric_limits<DWORD>::max()) continue;
+        if (streamIndex >= types.size() || !types[streamIndex]) continue;
+
+        DWORD bundleStreamIndex = 0;
+        hr = writer->AddStream(types[streamIndex].Get(), &bundleStreamIndex);
+        if (FAILED(hr)) {
+            std::wcerr << L"SAVE: audio bundle AddStream failed " << bundleFilename
+                       << L" 0x" << std::hex << hr << std::dec << std::endl;
+            return false;
+        }
+
+        bundleStreamIndices[streamIndex] = bundleStreamIndex;
+        ++audioStreamCount;
+    }
+
+    if (audioStreamCount == 0) return false;
+
+    hr = writer->BeginWriting();
+    if (FAILED(hr)) {
+        std::wcerr << L"SAVE: audio bundle BeginWriting failed " << bundleFilename
+                   << L" 0x" << std::hex << hr << std::dec << std::endl;
+        return false;
+    }
+
+    std::vector<LONGLONG> lastTimes(types.size(), -1);
+    std::vector<LONGLONG> lastDts(types.size(), -1);
+    int writtenSamples = 0;
+
+    for (const auto& sample : sortedSamples) {
+        if (!sample.sample || sample.streamIndex >= bundleStreamIndices.size()) continue;
+        if (bundleStreamIndices[sample.streamIndex] == std::numeric_limits<DWORD>::max()) continue;
+
+        LONGLONG originalTime = 0;
+        if (!TryGetSampleTime(sample, originalTime) || originalTime < exportStart || originalTime >= exportEnd) continue;
+
+        ComPtr<IMFSample> output;
+        hr = CloneSampleForExport(sample.sample.Get(), output);
+        if (FAILED(hr) || !output) continue;
+
+        LONGLONG adjustedTime = RelativeHns(originalTime, exportStart);
+        if (lastTimes[sample.streamIndex] >= 0 && adjustedTime <= lastTimes[sample.streamIndex]) {
+            adjustedTime = lastTimes[sample.streamIndex] + 1;
+        }
+
+        output->SetSampleTime(adjustedTime);
+
+        LONGLONG duration = 0;
+        if (FAILED(sample.sample->GetSampleDuration(&duration)) || duration <= 0) duration = 1;
+        if (originalTime + duration > exportEnd) duration = std::max<LONGLONG>(1, exportEnd - originalTime);
+        output->SetSampleDuration(duration);
+
+        ClampDecodeTimestamp(output.Get(), exportStart, lastDts[sample.streamIndex]);
+
+        hr = writer->WriteSample(bundleStreamIndices[sample.streamIndex], output.Get());
+        if (FAILED(hr)) {
+            std::wcerr << L"SAVE: audio bundle WriteSample failed " << bundleFilename
+                       << L" 0x" << std::hex << hr << std::dec << std::endl;
+            continue;
+        }
+
+        lastTimes[sample.streamIndex] = adjustedTime;
+        ++writtenSamples;
+    }
+
+    hr = writer->Finalize();
+    if (FAILED(hr)) {
+        std::wcerr << L"SAVE: audio bundle Finalize failed " << bundleFilename
+                   << L" 0x" << std::hex << hr << std::dec << std::endl;
+        return false;
+    }
+
+    return writtenSamples > 0;
+}
+
+bool WriteFernPackage(
+    const std::wstring& filename,
+    const std::string& manifestJson,
+    const std::wstring& audioBundleFilename) {
+    const std::filesystem::path packagePath = BuildFernPackageFilename(filename);
+    std::ifstream audioFile(audioBundleFilename, std::ios::binary);
+    if (!audioFile.is_open()) return false;
+
+    audioFile.seekg(0, std::ios::end);
+    const std::streamoff audioSize = audioFile.tellg();
+    audioFile.seekg(0, std::ios::beg);
+    if (audioSize <= 0) return false;
+
+    std::ofstream packageFile(packagePath, std::ios::binary | std::ios::trunc);
+    if (!packageFile.is_open()) {
+        std::wcerr << L"SAVE: package open failed " << packagePath.wstring() << std::endl;
+        return false;
+    }
+
+    constexpr char magic[] = "FERNPKG1";
+    const uint64_t jsonSize = static_cast<uint64_t>(manifestJson.size());
+    const uint64_t audioSize64 = static_cast<uint64_t>(audioSize);
+
+    packageFile.write(magic, 8);
+    packageFile.write(reinterpret_cast<const char*>(&jsonSize), sizeof(jsonSize));
+    packageFile.write(reinterpret_cast<const char*>(&audioSize64), sizeof(audioSize64));
+    packageFile.write(manifestJson.data(), static_cast<std::streamsize>(manifestJson.size()));
+
+    char buffer[64 * 1024];
+    while (audioFile.good()) {
+        audioFile.read(buffer, sizeof(buffer));
+        const std::streamsize read = audioFile.gcount();
+        if (read > 0) packageFile.write(buffer, read);
+    }
+
+    return packageFile.good();
+}
 
 
 HRESULT CloneSampleForExport(IMFSample* source, ComPtr<IMFSample>& clone) {
@@ -89,6 +357,7 @@ void ClampDecodeTimestamp(IMFSample* sample, LONGLONG exportStart, LONGLONG& las
 void AsyncSaveWorker(
     std::deque<StreamSample> samples,
     std::vector<ComPtr<IMFMediaType>> types,
+    std::vector<AudioTrackMetadata> audioTrackMetadata,
     std::wstring filename,
     LONGLONG exportEndHns) {
     HRESULT coHr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
@@ -136,7 +405,7 @@ void AsyncSaveWorker(
         return;
     }
 
-    const bool hasAudioType = types.size() > 1 && types[1];
+    PrepareAudioTracksForExport(types, audioTrackMetadata, exportStart, exportEndHns);
 
     ComPtr<IMFAttributes> attributes;
     MFCreateAttributes(&attributes, 1);
@@ -161,10 +430,12 @@ void AsyncSaveWorker(
         return;
     }
 
-    if (hasAudioType) {
-        hr = sinkWriter->AddStream(types[1].Get(), &sinkStreamIndices[1]);
+    for (size_t i = 1; i < types.size(); ++i) {
+        if (!types[i]) continue;
+
+        hr = sinkWriter->AddStream(types[i].Get(), &sinkStreamIndices[i]);
         if (FAILED(hr)) {
-            std::cerr << "SAVE: AddStream audio failed 0x" << std::hex << hr << std::dec << std::endl;
+            std::cerr << "SAVE: AddStream audio " << i << " failed 0x" << std::hex << hr << std::dec << std::endl;
             MFShutdown();
             if (coInitialized) CoUninitialize();
             return;
@@ -182,12 +453,11 @@ void AsyncSaveWorker(
     std::vector<LONGLONG> lastTimes(types.size(), -1);
     std::vector<LONGLONG> lastDts(types.size(), -1);
     int writtenVideo = 0;
-    int writtenAudio = 0;
+    std::vector<int> writtenAudio(types.size(), 0);
     bool firstVideoSample = true;
 
     for (const auto& sample : sortedSamples) {
         if (!sample.sample || sample.streamIndex >= types.size()) continue;
-        if (sample.streamIndex == 1 && !hasAudioType) continue;
         if (sinkStreamIndices[sample.streamIndex] == std::numeric_limits<DWORD>::max()) continue;
 
         LONGLONG originalTime = 0;
@@ -225,16 +495,33 @@ void AsyncSaveWorker(
 
         lastTimes[sample.streamIndex] = adjustedTime;
         if (sample.streamIndex == 0) ++writtenVideo;
-        if (sample.streamIndex == 1) ++writtenAudio;
+        if (sample.streamIndex > 0) ++writtenAudio[sample.streamIndex];
     }
 
     hr = sinkWriter->Finalize();
     if (FAILED(hr)) {
         std::cerr << "SAVE: Finalize failed 0x" << std::hex << hr << std::dec << std::endl;
+    } else {
+        const std::wstring audioBundleFilename = BuildAudioBundleFilename(filename);
+        if (WriteAudioBundle(sortedSamples, types, sinkStreamIndices, audioBundleFilename, exportStart, exportEndHns, attributes.Get())) {
+            const std::string manifestJson = BuildAudioTrackManifestJson(audioTrackMetadata, sinkStreamIndices);
+            WriteFernPackage(filename, manifestJson, audioBundleFilename);
+            DeleteFileW(audioBundleFilename.c_str());
+        }
+    }
+
+    int writtenAudioTotal = 0;
+    int audioStreamCount = 0;
+    for (size_t i = 1; i < writtenAudio.size(); ++i) {
+        if (sinkStreamIndices[i] == std::numeric_limits<DWORD>::max()) continue;
+        ++audioStreamCount;
+        writtenAudioTotal += writtenAudio[i];
     }
 
     std::wcout << L">>> Exportation terminee : " << filename
-               << L" (video=" << writtenVideo << L", audio=" << writtenAudio << L")" << std::endl;
+               << L" (video=" << writtenVideo
+               << L", audioStreams=" << audioStreamCount
+               << L", audioSamples=" << writtenAudioTotal << L")" << std::endl;
 
     MFShutdown();
     if (coInitialized) CoUninitialize();

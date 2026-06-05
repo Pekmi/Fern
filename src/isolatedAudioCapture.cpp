@@ -23,6 +23,19 @@ using namespace Microsoft::WRL;
 namespace {
 constexpr UINT32 kFramesPerSample = 1024;
 constexpr LONGLONG kRealtimeSilenceLagHns = 2000000LL;
+constexpr short kAudibleSampleThreshold = 512;
+constexpr LONGLONG kActivityMergeGapHns = 500000LL;
+
+void SetPcm16StereoFormat(WAVEFORMATEXTENSIBLE& format, UINT32 sampleRate) {
+    std::memset(&format, 0, sizeof(format));
+    format.Format.wFormatTag = WAVE_FORMAT_PCM;
+    format.Format.nChannels = 2;
+    format.Format.nSamplesPerSec = sampleRate;
+    format.Format.wBitsPerSample = 16;
+    format.Format.nBlockAlign = static_cast<WORD>((format.Format.nChannels * format.Format.wBitsPerSample) / 8);
+    format.Format.nAvgBytesPerSec = format.Format.nSamplesPerSec * format.Format.nBlockAlign;
+    format.Format.cbSize = 0;
+}
 
 short FloatToPcm16(float value) {
     value = std::clamp(value, -1.0f, 1.0f);
@@ -37,7 +50,7 @@ short Int24ToPcm16(const BYTE* src) {
 }
 
 class IsolatedAudioCapture::CompletionHandler :
-    public RuntimeClass<RuntimeClassFlags<ClassicCom>, IActivateAudioInterfaceCompletionHandler>
+    public RuntimeClass<RuntimeClassFlags<ClassicCom>, FtmBase, IActivateAudioInterfaceCompletionHandler>
 {
 public:
     explicit CompletionHandler(IsolatedAudioCapture* parent) : m_parent(parent) {}
@@ -70,11 +83,13 @@ IsolatedAudioCapture::~IsolatedAudioCapture() {
     if (m_activationFinishedEvent) CloseHandle(m_activationFinishedEvent);
 }
 
-void IsolatedAudioCapture::SetStartTime(UINT64 rawQpc) {
+void IsolatedAudioCapture::SetStartTime(UINT64 rawQpc, LONGLONG timelineOffsetHns) {
     std::lock_guard<std::mutex> lock(m_audioMutex);
     m_pcmBuffer.clear();
-    m_timelineFramesWritten = 0;
-    m_framesSent = 0;
+    m_activityRanges.clear();
+    const UINT64 offsetFrames = HnsToFrame(std::max<LONGLONG>(0, timelineOffsetHns));
+    m_timelineFramesWritten = offsetFrames;
+    m_framesSent = offsetFrames;
     m_masterStartHns.store(static_cast<UINT64>(fern::RawQpcToHns(static_cast<LONGLONG>(rawQpc))), std::memory_order_release);
 }
 
@@ -90,6 +105,7 @@ HRESULT IsolatedAudioCapture::Start() {
     {
         std::lock_guard<std::mutex> lock(m_audioMutex);
         m_pcmBuffer.clear();
+        m_activityRanges.clear();
         m_timelineFramesWritten = 0;
         m_framesSent = 0;
         m_masterStartHns.store(0, std::memory_order_release);
@@ -132,18 +148,23 @@ HRESULT IsolatedAudioCapture::Start() {
 
     if (!m_audioClient) return E_FAIL;
 
-    WAVEFORMATEX* pwfx = nullptr;
-    hr = m_audioClient->GetMixFormat(&pwfx);
-    if (FAILED(hr) || !pwfx) return FAILED(hr) ? hr : E_FAIL;
-
-    if (pwfx->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
-        std::memset(&m_mixFormat, 0, sizeof(WAVEFORMATEXTENSIBLE));
-        std::memcpy(&m_mixFormat, pwfx, std::min<size_t>(sizeof(WAVEFORMATEXTENSIBLE), pwfx->cbSize + sizeof(WAVEFORMATEX)));
+    const bool isProcessLoopback = m_targetPid != 0;
+    if (isProcessLoopback) {
+        SetPcm16StereoFormat(m_mixFormat, 48000);
     } else {
-        std::memset(&m_mixFormat, 0, sizeof(WAVEFORMATEXTENSIBLE));
-        std::memcpy(&m_mixFormat.Format, pwfx, sizeof(WAVEFORMATEX));
+        WAVEFORMATEX* pwfx = nullptr;
+        hr = m_audioClient->GetMixFormat(&pwfx);
+        if (FAILED(hr) || !pwfx) return FAILED(hr) ? hr : E_FAIL;
+
+        if (pwfx->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
+            std::memset(&m_mixFormat, 0, sizeof(WAVEFORMATEXTENSIBLE));
+            std::memcpy(&m_mixFormat, pwfx, std::min<size_t>(sizeof(WAVEFORMATEXTENSIBLE), pwfx->cbSize + sizeof(WAVEFORMATEX)));
+        } else {
+            std::memset(&m_mixFormat, 0, sizeof(WAVEFORMATEXTENSIBLE));
+            std::memcpy(&m_mixFormat.Format, pwfx, sizeof(WAVEFORMATEX));
+        }
+        CoTaskMemFree(pwfx);
     }
-    CoTaskMemFree(pwfx);
 
     hr = m_audioClient->Initialize(
         AUDCLNT_SHAREMODE_SHARED,
@@ -152,6 +173,16 @@ HRESULT IsolatedAudioCapture::Start() {
         0,
         reinterpret_cast<WAVEFORMATEX*>(&m_mixFormat),
         NULL);
+    if (FAILED(hr) && isProcessLoopback) {
+        SetPcm16StereoFormat(m_mixFormat, 44100);
+        hr = m_audioClient->Initialize(
+            AUDCLNT_SHAREMODE_SHARED,
+            AUDCLNT_STREAMFLAGS_LOOPBACK,
+            1000000,
+            0,
+            reinterpret_cast<WAVEFORMATEX*>(&m_mixFormat),
+            NULL);
+    }
     if (FAILED(hr)) return hr;
 
     hr = m_audioClient->GetService(IID_PPV_ARGS(&m_captureClient));
@@ -228,6 +259,7 @@ void IsolatedAudioCapture::AppendConvertedFramesLocked(const BYTE* data, UINT32 
 
     short* dest = m_pcmBuffer.data() + destOffset;
     const BYTE* srcBytes = data + static_cast<size_t>(frameOffset) * fmt.nBlockAlign;
+    const UINT64 appendStartFrame = m_timelineFramesWritten;
 
     if (IsFloatMixFormat()) {
         if (fmt.wBitsPerSample == 32) {
@@ -237,6 +269,7 @@ void IsolatedAudioCapture::AppendConvertedFramesLocked(const BYTE* data, UINT32 
             const double* src = reinterpret_cast<const double*>(srcBytes);
             for (size_t i = 0; i < totalSamples; ++i) dest[i] = FloatToPcm16(static_cast<float>(src[i]));
         }
+        RecordActivityLocked(appendStartFrame, dest, frames);
         return;
     }
 
@@ -267,6 +300,65 @@ void IsolatedAudioCapture::AppendConvertedFramesLocked(const BYTE* data, UINT32 
     default:
         break;
     }
+
+    RecordActivityLocked(appendStartFrame, dest, frames);
+}
+
+void IsolatedAudioCapture::RecordActivityLocked(UINT64 startFrame, const short* samples, UINT32 frames) {
+    const UINT32 channels = m_mixFormat.Format.nChannels;
+    if (!samples || channels == 0 || frames == 0) return;
+
+    bool inRun = false;
+    UINT64 runStartFrame = 0;
+    UINT64 runFrames = 0;
+
+    for (UINT32 frame = 0; frame < frames; ++frame) {
+        bool audible = false;
+        const short* frameSamples = samples + static_cast<size_t>(frame) * channels;
+
+        for (UINT32 channel = 0; channel < channels; ++channel) {
+            if (std::abs(static_cast<int>(frameSamples[channel])) >= kAudibleSampleThreshold) {
+                audible = true;
+                break;
+            }
+        }
+
+        if (audible) {
+            if (!inRun) {
+                inRun = true;
+                runStartFrame = startFrame + frame;
+                runFrames = 0;
+            }
+            ++runFrames;
+        } else if (inRun) {
+            AddActivityRangeLocked(runStartFrame, runFrames);
+            inRun = false;
+            runFrames = 0;
+        }
+    }
+
+    if (inRun) {
+        AddActivityRangeLocked(runStartFrame, runFrames);
+    }
+}
+
+void IsolatedAudioCapture::AddActivityRangeLocked(UINT64 startFrame, UINT64 frames) {
+    if (frames == 0) return;
+
+    const LONGLONG startHns = FramesToHns(startFrame);
+    const LONGLONG durationHns = std::max<LONGLONG>(1, FramesToHns(startFrame + frames) - startHns);
+
+    if (!m_activityRanges.empty()) {
+        fern::AudioActivityRange& last = m_activityRanges.back();
+        const LONGLONG lastEndHns = last.startHns + last.durationHns;
+        if (startHns <= lastEndHns + kActivityMergeGapHns) {
+            const LONGLONG newEndHns = std::max(lastEndHns, startHns + durationHns);
+            last.durationHns = std::max<LONGLONG>(1, newEndHns - last.startHns);
+            return;
+        }
+    }
+
+    m_activityRanges.push_back({ startHns, durationHns });
 }
 
 void IsolatedAudioCapture::AppendPacketLocked(const BYTE* data, UINT32 frames, DWORD flags, UINT64 packetQpcHns) {
@@ -383,6 +475,11 @@ HRESULT IsolatedAudioCapture::GetAudioSample(ComPtr<IMFSample>& pSample) {
     pSample->SetSampleTime(hnsTime);
     pSample->SetSampleDuration(hnsDuration);
     return S_OK;
+}
+
+std::vector<fern::AudioActivityRange> IsolatedAudioCapture::GetActivityRanges() {
+    std::lock_guard<std::mutex> lock(m_audioMutex);
+    return m_activityRanges;
 }
 
 void IsolatedAudioCapture::CaptureLoop() {

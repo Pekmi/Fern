@@ -80,13 +80,21 @@ namespace FernUI.Models
 
     public class AudioTrack : INotifyPropertyChanged
     {
+        private int _audioIndex;
         private string _name = string.Empty;
         private string _icon = "\uE7F5";
+        private string _sidecarPath = string.Empty;
+        private int _sidecarAudioIndex;
         private double _volume = 100;
         private double _peakLevel;
+        private double _activeRatio;
 
+        public int AudioIndex { get => _audioIndex; set => SetProperty(ref _audioIndex, value); }
         public string Name { get => _name; set => SetProperty(ref _name, value); }
         public string Icon { get => _icon; set => SetProperty(ref _icon, value); }
+        public string SidecarPath { get => _sidecarPath; set => SetProperty(ref _sidecarPath, value); }
+        public int SidecarAudioIndex { get => _sidecarAudioIndex; set => SetProperty(ref _sidecarAudioIndex, value); }
+        public double ActiveRatio { get => _activeRatio; set => SetProperty(ref _activeRatio, value); }
         public double Volume 
         { 
             get => _volume; 

@@ -67,6 +67,13 @@ namespace FernUI.Views
             DisposeStorageWatcher();
         }
 
+        protected override void OnNavigatedTo(NavigationEventArgs e)
+        {
+            base.OnNavigatedTo(e);
+            Frame.ForwardStack.Clear();
+            MemoryCleanup.CollectNowAndAfter(DispatcherQueue);
+        }
+
         private async void FolderRefreshDebounceTimer_Tick(object? sender, object e)
         {
             _folderRefreshDebounceTimer.Stop();
@@ -874,24 +881,11 @@ namespace FernUI.Views
             {
                 int hoverIndex = _displayedCards.IndexOf(card);
                 if (hoverIndex != -1) UpdateSelection(hoverIndex);
-
-                if (card.FindName("HoverPlayer") is MediaPlayerElement player)
-                {
-                    player.Opacity = 1;
-                    player.MediaPlayer.IsLoopingEnabled = true;
-                    player.MediaPlayer.Play();
-                }
             }
         }
 
         private void CardRoot_PointerExited(object sender, PointerRoutedEventArgs e)
         {
-            if (sender is FrameworkElement card && card.FindName("HoverPlayer") is MediaPlayerElement player)
-            {
-                player.Opacity = 0;
-                player.MediaPlayer.Pause();
-                player.MediaPlayer.PlaybackSession.Position = TimeSpan.Zero;
-            }
         }
 
         private void CardRoot_Tapped(object sender, TappedRoutedEventArgs e)
