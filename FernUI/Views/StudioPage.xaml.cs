@@ -1,10 +1,12 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Navigation;
 using System.Collections.ObjectModel;
 using FernUI.Models;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.Media.Core;
 using Windows.Media.Playback;
 using System;
@@ -12,9 +14,12 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using Windows.Foundation;
 using Windows.Foundation.Collections;
+using Windows.Storage;
+using Windows.Storage.Pickers;
 
 namespace FernUI.Views
 {
@@ -25,6 +30,7 @@ namespace FernUI.Views
         private DispatcherTimer _timer;
         private DispatcherTimer _singleTapTimer;
         private DispatcherTimer _controlsHideTimer;
+        private DispatcherTimer _saveFeedbackTimer;
         private bool _isSeeking = false;
         private bool _isUpdatingSlider = false;
         private bool _isVideoSeeking = false;
@@ -41,6 +47,12 @@ namespace FernUI.Views
         private bool _isMuted;
         private bool _isTearingDownStudioSession;
         private TypedEventHandler<MediaPlaybackItem, IVectorChangedEventArgs>? _playbackItemAudioTracksChangedHandler;
+        private ContentDialog? _exportDialog;
+        private Slider? _exportSizeSlider;
+        private TextBlock? _exportSizeText;
+        private ProgressBar? _exportProgressBar;
+        private TextBlock? _exportStatusText;
+        private StorageFile? _lastExportedFile;
 
         private sealed class AudioTrackManifestInfo
         {
@@ -48,6 +60,7 @@ namespace FernUI.Views
             public string SidecarPath { get; set; } = string.Empty;
             public int SidecarAudioIndex { get; set; }
             public double ActiveRatio { get; set; }
+            public double? Volume { get; set; }
         }
 
         public StudioPage()
@@ -68,6 +81,10 @@ namespace FernUI.Views
             _controlsHideTimer = new DispatcherTimer();
             _controlsHideTimer.Interval = TimeSpan.FromSeconds(2);
             _controlsHideTimer.Tick += ControlsHideTimer_Tick;
+
+            _saveFeedbackTimer = new DispatcherTimer();
+            _saveFeedbackTimer.Interval = TimeSpan.FromSeconds(1.4);
+            _saveFeedbackTimer.Tick += SaveFeedbackTimer_Tick;
 
             ProgressSlider.AddHandler(UIElement.PointerPressedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(Slider_PointerPressed), true);
             ProgressSlider.AddHandler(UIElement.PointerReleasedEvent, new Microsoft.UI.Xaml.Input.PointerEventHandler(Slider_PointerReleased), true);
@@ -243,6 +260,7 @@ namespace FernUI.Views
                 string icon = "\uE7F5";
                 string lowerName = name.ToLower();
                 bool isVoiceMeeter = lowerName.Contains("voicemeeter");
+                double defaultVolume = isVoiceMeeter ? 0 : 100;
                 if (lowerName.Contains("mic")) icon = "\uE720";
                 else if (lowerName.Contains("game") || lowerName.Contains("jeu") || lowerName.Contains("system")) icon = "\uE7FC";
                 else if (lowerName.Contains("discord") || lowerName.Contains("chat")) icon = "\uE191";
@@ -252,7 +270,7 @@ namespace FernUI.Views
                     AudioIndex = i,
                     Name = name, 
                     Icon = icon, 
-                    Volume = isVoiceMeeter ? 0 : 100, 
+                    Volume = manifestInfo?.Volume ?? defaultVolume,
                     SidecarPath = manifestInfo?.SidecarPath ?? string.Empty,
                     SidecarAudioIndex = manifestInfo?.SidecarAudioIndex ?? 0,
                     ActiveRatio = manifestInfo?.ActiveRatio ?? 0,
@@ -348,6 +366,7 @@ namespace FernUI.Views
             _timer.Stop();
             _singleTapTimer.Stop();
             _controlsHideTimer.Stop();
+            _saveFeedbackTimer.Stop();
             SetStudioFullScreen(false);
             _isSeeking = false;
             _isUpdatingSlider = false;
@@ -375,6 +394,402 @@ namespace FernUI.Views
         private void PlayPauseButton_Click(object sender, RoutedEventArgs e)
         {
             TogglePlayback();
+        }
+
+        private void SaveButton_Click(object sender, RoutedEventArgs e)
+        {
+            bool saved = SaveCurrentAudioMix();
+            ShowSaveFeedback(saved);
+        }
+
+        private bool SaveCurrentAudioMix()
+        {
+            if (_selectedClip == null || string.IsNullOrWhiteSpace(_selectedClip.FilePath))
+            {
+                return false;
+            }
+
+            string packagePath = Path.ChangeExtension(_selectedClip.FilePath, ".fern");
+            if (!File.Exists(packagePath))
+            {
+                System.Diagnostics.Debug.WriteLine($"Studio: paquet Fern introuvable pour sauvegarde: {packagePath}");
+                return false;
+            }
+
+            try
+            {
+                SaveAudioVolumesToFernPackage(packagePath, AudioTracks);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Studio: sauvegarde mix audio impossible: {ex.Message}");
+                return false;
+            }
+        }
+
+        private void ShowSaveFeedback(bool saved)
+        {
+            _saveFeedbackTimer.Stop();
+
+            SaveButton.IsEnabled = false;
+            SaveButtonIcon.Glyph = saved ? "\uE73E" : "\uE783";
+            SaveButtonText.Text = saved ? "Sauvegard\u00e9" : "Erreur";
+
+            if (SaveButton.RenderTransform is CompositeTransform transform)
+            {
+                transform.ScaleX = 0.97;
+                transform.ScaleY = 0.97;
+
+                var storyboard = new Storyboard();
+                storyboard.Children.Add(CreateDoubleAnimation(SaveButton, "(UIElement.RenderTransform).(CompositeTransform.ScaleX)", 1, 180));
+                storyboard.Children.Add(CreateDoubleAnimation(SaveButton, "(UIElement.RenderTransform).(CompositeTransform.ScaleY)", 1, 180));
+                storyboard.Begin();
+            }
+
+            _saveFeedbackTimer.Start();
+        }
+
+        private void SaveFeedbackTimer_Tick(object? sender, object e)
+        {
+            _saveFeedbackTimer.Stop();
+            SaveButton.IsEnabled = true;
+            SaveButtonIcon.Glyph = "\uE74E";
+            SaveButtonText.Text = "Sauvegarder";
+        }
+
+        private async void ExportButton_Click(object sender, RoutedEventArgs e)
+        {
+            await ShowExportDialogAsync();
+        }
+
+        private async Task ShowExportDialogAsync()
+        {
+            if (_selectedClip == null || string.IsNullOrWhiteSpace(_selectedClip.FilePath) || !File.Exists(_selectedClip.FilePath))
+            {
+                return;
+            }
+
+            long sourceBytes = new FileInfo(_selectedClip.FilePath).Length;
+            double maximumMb = Math.Max(0.1, sourceBytes / 1024.0 / 1024.0);
+            double minimumMb = Math.Min(5.0, maximumMb);
+            _lastExportedFile = null;
+
+            _exportDialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                CloseButtonText = string.Empty,
+                DefaultButton = ContentDialogButton.None,
+                Content = CreateExportSizePickerContent(minimumMb, maximumMb)
+            };
+
+            await _exportDialog.ShowAsync();
+            _exportDialog = null;
+            _exportSizeSlider = null;
+            _exportSizeText = null;
+            _exportProgressBar = null;
+            _exportStatusText = null;
+        }
+
+        private UIElement CreateExportSizePickerContent(double minimumMb, double maximumMb)
+        {
+            var root = CreateExportDialogGrid();
+
+            var leftPanel = new StackPanel { Spacing = 14 };
+            leftPanel.Children.Add(new TextBlock
+            {
+                Text = "Taille souhait\u00e9e",
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+            });
+
+            _exportSizeSlider = new Slider
+            {
+                Minimum = minimumMb,
+                Maximum = maximumMb,
+                Value = maximumMb,
+                StepFrequency = maximumMb <= 10 ? 0.1 : 1,
+                TickFrequency = maximumMb <= 10 ? 0.5 : 5
+            };
+            _exportSizeSlider.ValueChanged += (_, _) => UpdateExportSizeText();
+            leftPanel.Children.Add(_exportSizeSlider);
+
+            _exportSizeText = new TextBlock
+            {
+                Opacity = 0.72
+            };
+            leftPanel.Children.Add(_exportSizeText);
+            UpdateExportSizeText();
+
+            Grid.SetColumn(leftPanel, 0);
+            root.Children.Add(leftPanel);
+
+            var actions = new StackPanel { Spacing = 10, VerticalAlignment = VerticalAlignment.Center };
+            var exportButton = new Button
+            {
+                Content = "Exporter",
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Width = 160,
+                Padding = new Thickness(0, 10, 0, 10),
+                MinHeight = 40
+            };
+            exportButton.Click += (_, _) => _ = ExportFromDialogAsync();
+            actions.Children.Add(exportButton);
+
+            var cancelButton = new Button
+            {
+                Content = "Annuler",
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Width = 160,
+                Padding = new Thickness(0, 10, 0, 10),
+                MinHeight = 40
+            };
+            cancelButton.Click += (_, _) => _exportDialog?.Hide();
+            actions.Children.Add(cancelButton);
+            Grid.SetColumn(actions, 1);
+            root.Children.Add(actions);
+
+            return root;
+        }
+
+        private void UpdateExportSizeText()
+        {
+            if (_exportSizeSlider == null || _exportSizeText == null) return;
+
+            _exportSizeText.Text =
+                $"{FormatMegabytes(_exportSizeSlider.Value)} / {FormatMegabytes(_exportSizeSlider.Maximum)}";
+        }
+
+        private static Grid CreateExportDialogGrid()
+        {
+            var grid = new Grid
+            {
+                ColumnSpacing = 14,
+                Width = 520,
+                MaxWidth = 520
+            };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(6, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(4, GridUnitType.Star) });
+            return grid;
+        }
+
+        private async Task ExportFromDialogAsync()
+        {
+            if (_selectedClip == null || _exportDialog == null || _exportSizeSlider == null)
+            {
+                return;
+            }
+
+            string sourcePath = _selectedClip.FilePath;
+            double targetSizeMb = _exportSizeSlider.Value;
+            IReadOnlyList<FernUI.Models.AudioTrack> tracks = AudioTracks.ToList();
+            TimeSpan duration = _selectedClip.DurationValue > TimeSpan.Zero
+                ? _selectedClip.DurationValue
+                : _videoPlayer?.PlaybackSession.NaturalDuration ?? TimeSpan.Zero;
+            SaveCurrentAudioMix();
+
+            ShowExportProgressContent();
+
+            try
+            {
+                var progress = new Progress<double>(value =>
+                {
+                    if (_exportProgressBar == null) return;
+                    _exportProgressBar.IsIndeterminate = false;
+                    _exportProgressBar.Value = Math.Clamp(value, 0, 100);
+                    if (_exportStatusText != null)
+                    {
+                        _exportStatusText.Text = $"Traitement... {Math.Clamp(value, 0, 100):0}%";
+                    }
+                });
+
+                _lastExportedFile = await StudioExportService.ExportAsync(sourcePath, tracks, targetSizeMb, duration, progress);
+                ShowExportCompleteContent(_lastExportedFile);
+            }
+            catch (Exception ex)
+            {
+                ShowExportErrorContent(ex.Message);
+            }
+        }
+
+        private void ShowExportProgressContent()
+        {
+            if (_exportDialog == null) return;
+
+            _exportDialog.CloseButtonText = string.Empty;
+            _exportDialog.Content = new StackPanel
+            {
+                Spacing = 16,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "Export en cours",
+                        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+                    },
+                    (_exportStatusText = new TextBlock
+                    {
+                        Text = "Pr\u00e9paration...",
+                        Opacity = 0.72
+                    }),
+                    (_exportProgressBar = new ProgressBar
+                    {
+                        Minimum = 0,
+                        Maximum = 100,
+                        IsIndeterminate = true
+                    })
+                }
+            };
+        }
+
+        private void ShowExportCompleteContent(StorageFile exportedFile)
+        {
+            if (_exportDialog == null) return;
+
+            _exportDialog.CloseButtonText = string.Empty;
+            FileInfo fileInfo = new(exportedFile.Path);
+
+            var root = CreateExportDialogGrid();
+
+            var dragBlock = new Border
+            {
+                CanDrag = true,
+                Padding = new Thickness(18),
+                CornerRadius = new CornerRadius(8),
+                BorderThickness = new Thickness(1),
+                BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(96, 255, 255, 255)),
+                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(18, 255, 255, 255)),
+                Child = new StackPanel
+                {
+                    Spacing = 8,
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    Children =
+                    {
+                        new FontIcon { Glyph = "\uE714", FontSize = 28 },
+                        new TextBlock
+                        {
+                            Text = exportedFile.Name,
+                            TextAlignment = TextAlignment.Center,
+                            TextWrapping = TextWrapping.Wrap,
+                            MaxLines = 2,
+                            TextTrimming = TextTrimming.CharacterEllipsis
+                        },
+                        new TextBlock
+                        {
+                            Text = FormatFileSize(fileInfo.Length),
+                            TextAlignment = TextAlignment.Center,
+                            Opacity = 0.72
+                        }
+                    }
+                }
+            };
+            dragBlock.MinHeight = 112;
+            dragBlock.DragStarting += (_, args) =>
+            {
+                if (_lastExportedFile == null)
+                {
+                    args.Cancel = true;
+                    return;
+                }
+
+                args.Data.RequestedOperation = DataPackageOperation.Copy;
+                args.Data.SetStorageItems(new[] { _lastExportedFile }, false);
+                args.DragUI.SetContentFromDataPackage();
+            };
+            Grid.SetColumn(dragBlock, 0);
+            root.Children.Add(dragBlock);
+
+            var actions = new StackPanel { Spacing = 10, VerticalAlignment = VerticalAlignment.Center };
+            var saveAsButton = new Button
+            {
+                Content = "Enregistrer sous",
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Width = 160,
+                Padding = new Thickness(0, 10, 0, 10),
+                MinHeight = 40
+            };
+            saveAsButton.Click += async (_, _) => await SaveExportedFileAsAsync();
+            actions.Children.Add(saveAsButton);
+
+            var doneButton = new Button
+            {
+                Content = "Termin\u00e9",
+                Style = SaveButton.Style,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Width = 160,
+                Padding = new Thickness(0, 10, 0, 10),
+                MinHeight = 40
+            };
+            doneButton.Click += (_, _) => _exportDialog?.Hide();
+            actions.Children.Add(doneButton);
+            Grid.SetColumn(actions, 1);
+            root.Children.Add(actions);
+
+            _exportDialog.Content = root;
+        }
+
+        private void ShowExportErrorContent(string message)
+        {
+            if (_exportDialog == null) return;
+
+            _exportDialog.CloseButtonText = string.Empty;
+            var root = new StackPanel { Spacing = 16 };
+            root.Children.Add(new TextBlock
+            {
+                Text = "Export impossible",
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+            });
+            root.Children.Add(new TextBlock
+            {
+                Text = message,
+                TextWrapping = TextWrapping.Wrap,
+                Opacity = 0.72
+            });
+
+            var doneButton = new Button
+            {
+                Content = "Termin\u00e9",
+                Style = SaveButton.Style,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Padding = new Thickness(0, 12, 0, 12)
+            };
+            doneButton.Click += (_, _) => _exportDialog?.Hide();
+            root.Children.Add(doneButton);
+
+            _exportDialog.Content = root;
+        }
+
+        private async Task SaveExportedFileAsAsync()
+        {
+            if (_lastExportedFile == null || string.IsNullOrWhiteSpace(_lastExportedFile.Path)) return;
+
+            var picker = new FileSavePicker
+            {
+                SuggestedStartLocation = PickerLocationId.VideosLibrary,
+                SuggestedFileName = Path.GetFileNameWithoutExtension(_lastExportedFile.Name)
+            };
+            picker.FileTypeChoices.Add("Vid\u00e9o MP4", new List<string> { ".mp4" });
+
+            if (App.MainWindow != null)
+            {
+                nint hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindow);
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+            }
+
+            StorageFile? destinationFile = await picker.PickSaveFileAsync();
+            if (destinationFile == null) return;
+
+            await _lastExportedFile.CopyAndReplaceAsync(destinationFile);
+        }
+
+        private static string FormatMegabytes(double megabytes)
+        {
+            return megabytes >= 10 ? $"{megabytes:0} Mo" : $"{megabytes:0.0} Mo";
+        }
+
+        private static string FormatFileSize(long bytes)
+        {
+            double megabytes = bytes / 1024.0 / 1024.0;
+            return FormatMegabytes(megabytes);
         }
 
         private static Dictionary<int, AudioTrackManifestInfo> LoadAudioTrackManifest(string filePath)
@@ -420,6 +835,13 @@ namespace FernUI.Views
                         activeRatioElement.TryGetDouble(out activeRatio);
                     }
 
+                    double? volume = null;
+                    if (track.TryGetProperty("volume", out JsonElement volumeElement) &&
+                        volumeElement.TryGetDouble(out double volumeValue))
+                    {
+                        volume = Math.Clamp(volumeValue, 0, 100);
+                    }
+
                     string sidecarPath = string.Empty;
                     if (track.TryGetProperty("sidecarFile", out JsonElement sidecarElement))
                     {
@@ -437,7 +859,8 @@ namespace FernUI.Views
                         Name = name,
                         SidecarPath = sidecarPath,
                         SidecarAudioIndex = 0,
-                        ActiveRatio = Math.Clamp(activeRatio, 0, 1)
+                        ActiveRatio = Math.Clamp(activeRatio, 0, 1),
+                        Volume = volume
                     };
                 }
             }
@@ -494,12 +917,20 @@ namespace FernUI.Views
                     activeRatioElement.TryGetDouble(out activeRatio);
                 }
 
+                double? volume = null;
+                if (track.TryGetProperty("volume", out JsonElement volumeElement) &&
+                    volumeElement.TryGetDouble(out double volumeValue))
+                {
+                    volume = Math.Clamp(volumeValue, 0, 100);
+                }
+
                 tracksByAudioIndex[audioIndex] = new AudioTrackManifestInfo
                 {
                     Name = name,
                     SidecarPath = audioBundlePath,
                     SidecarAudioIndex = audioIndex,
-                    ActiveRatio = Math.Clamp(activeRatio, 0, 1)
+                    ActiveRatio = Math.Clamp(activeRatio, 0, 1),
+                    Volume = volume
                 };
             }
 
@@ -542,6 +973,109 @@ namespace FernUI.Views
             }
 
             return bundlePath;
+        }
+
+        private static void SaveAudioVolumesToFernPackage(string packagePath, IEnumerable<FernUI.Models.AudioTrack> audioTracks)
+        {
+            var volumeByAudioIndex = audioTracks.ToDictionary(
+                track => track.AudioIndex,
+                track => Math.Clamp(track.Volume, 0, 100));
+
+            string tempPath = packagePath + ".tmp";
+
+            using (var input = File.OpenRead(packagePath))
+            {
+                Span<byte> magic = stackalloc byte[8];
+                if (input.Read(magic) != magic.Length || !magic.SequenceEqual("FERNPKG1"u8))
+                {
+                    return;
+                }
+
+                ulong jsonSize = ReadUInt64(input);
+                ulong audioSize = ReadUInt64(input);
+                if (jsonSize == 0 || jsonSize > 8 * 1024 * 1024 || audioSize == 0)
+                {
+                    return;
+                }
+
+                byte[] jsonBytes = new byte[(int)jsonSize];
+                if (input.Read(jsonBytes, 0, jsonBytes.Length) != jsonBytes.Length)
+                {
+                    return;
+                }
+
+                JsonNode? rootNode = JsonNode.Parse(jsonBytes);
+                if (rootNode is not JsonObject root ||
+                    root["tracks"] is not JsonArray tracks)
+                {
+                    return;
+                }
+
+                foreach (JsonNode? trackNode in tracks)
+                {
+                    if (trackNode is not JsonObject trackObject) continue;
+                    if (!TryGetInt(trackObject["audioIndex"], out int audioIndex)) continue;
+                    if (!volumeByAudioIndex.TryGetValue(audioIndex, out double volume)) continue;
+
+                    trackObject["volume"] = Math.Round(volume, 2);
+                }
+
+                byte[] updatedJsonBytes = JsonSerializer.SerializeToUtf8Bytes(root, new JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
+
+                using var output = File.Open(tempPath, FileMode.Create, FileAccess.Write, FileShare.None);
+                output.Write("FERNPKG1"u8);
+                WriteUInt64(output, (ulong)updatedJsonBytes.Length);
+                WriteUInt64(output, audioSize);
+                output.Write(updatedJsonBytes);
+                CopyExact(input, output, audioSize);
+            }
+
+            File.Move(tempPath, packagePath, overwrite: true);
+        }
+
+        private static bool TryGetInt(JsonNode? node, out int value)
+        {
+            value = 0;
+            if (node == null) return false;
+
+            try
+            {
+                value = node.GetValue<int>();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static void WriteUInt64(Stream stream, ulong value)
+        {
+            Span<byte> buffer = stackalloc byte[8];
+            BitConverter.TryWriteBytes(buffer, value);
+            stream.Write(buffer);
+        }
+
+        private static void CopyExact(Stream input, Stream output, ulong bytesToCopy)
+        {
+            byte[] buffer = new byte[64 * 1024];
+            ulong remaining = bytesToCopy;
+
+            while (remaining > 0)
+            {
+                int toRead = (int)Math.Min((ulong)buffer.Length, remaining);
+                int read = input.Read(buffer, 0, toRead);
+                if (read <= 0)
+                {
+                    throw new EndOfStreamException("Paquet Fern incomplet pendant la sauvegarde.");
+                }
+
+                output.Write(buffer, 0, read);
+                remaining -= (ulong)read;
+            }
         }
 
         private void CreateAudioPlayers()

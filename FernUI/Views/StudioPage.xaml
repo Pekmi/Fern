@@ -154,7 +154,7 @@
                                 </Border>
                                 <TextBlock x:Name="DurationText" Text="00:00" Style="{ThemeResource CaptionTextBlockStyle}" VerticalAlignment="Center"/>
                             </StackPanel>
-                            <TextBlock Text="Studio Audio" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,0,0,16"/>
+                            <TextBlock Text="Pistes audio" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,0,0,16"/>
                         </StackPanel>
                         
                         <!-- Console de Mixage -->
@@ -181,8 +181,27 @@
                         </ListView>
 
                         <StackPanel Grid.Row="2" Margin="0,24,0,0">
-                            <Button Content="Exporter le clip" Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Stretch" Padding="0,12" Margin="0,0,0,12"/>
-                            <Button Content="Générer un lien Cloud" HorizontalAlignment="Stretch" Padding="0,12"/>
+                            <Button Content="Partager" HorizontalAlignment="Stretch" Padding="0,12" Margin="0,0,0,12"/>
+                            <Button x:Name="ExportButton"
+                                    Content="Exporter"
+                                    HorizontalAlignment="Stretch"
+                                    Padding="0,12"
+                                    Margin="0,0,0,12"
+                                    Click="ExportButton_Click"/>
+                            <Button x:Name="SaveButton"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    HorizontalAlignment="Stretch"
+                                    Padding="0,12"
+                                    Click="SaveButton_Click"
+                                    RenderTransformOrigin="0.5,0.5">
+                                <Button.RenderTransform>
+                                    <CompositeTransform/>
+                                </Button.RenderTransform>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8">
+                                    <FontIcon x:Name="SaveButtonIcon" Glyph="&#xE74E;" FontSize="16"/>
+                                    <TextBlock x:Name="SaveButtonText" Text="Sauvegarder"/>
+                                </StackPanel>
+                            </Button>
                         </StackPanel>
                     </Grid>
                 </Border>
