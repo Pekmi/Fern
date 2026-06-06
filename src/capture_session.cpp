@@ -272,6 +272,22 @@ bool BeginVideoEncoderStreaming(IMFTransform* videoEncoder) {
     return SUCCEEDED(hr);
 }
 
+VideoEncoderSettings BuildVideoEncoderSettings(const Settings& settings) {
+    VideoEncoderSettings encoderSettings;
+    encoderSettings.fps = settings.fps;
+    encoderSettings.bitrateMbps = settings.bitrate;
+    encoderSettings.codec = settings.videoCodec;
+    encoderSettings.profile = settings.encoderProfile;
+    encoderSettings.rateControl = settings.rateControl;
+    encoderSettings.maxBitrateMultiplier = settings.maxBitrateMultiplier;
+    encoderSettings.gopSeconds = settings.gopSeconds;
+    encoderSettings.bFrames = settings.bFrames;
+    encoderSettings.lowLatency = settings.lowLatency;
+    encoderSettings.qualityVsSpeed = settings.qualityVsSpeed;
+    encoderSettings.encoderIndex = settings.encoderIndex;
+    return encoderSettings;
+}
+
 bool RebuildVideoPipeline(
     const Settings& settings,
     DesktopCaptureTarget& captureTarget,
@@ -297,8 +313,7 @@ bool RebuildVideoPipeline(
         rebuiltEncoder,
         rebuiltTarget.duplicationDesc.ModeDesc.Width,
         rebuiltTarget.duplicationDesc.ModeDesc.Height,
-        settings.fps,
-        settings.bitrate);
+        BuildVideoEncoderSettings(settings));
     if (FAILED(hr) || !rebuiltEncoder) {
         std::cerr << "VIDEO: encoder rebuild failed 0x" << std::hex << hr << std::dec << std::endl;
         return false;
@@ -430,8 +445,7 @@ void RunCaptureSession(const Settings& settings) {
         videoEncoder,
         duplicationDesc.ModeDesc.Width,
         duplicationDesc.ModeDesc.Height,
-        settings.fps,
-        settings.bitrate);
+        BuildVideoEncoderSettings(settings));
     if (FAILED(hr) || !videoEncoder) {
         std::cerr << "VIDEO: encoder init failed 0x" << std::hex << hr << std::dec << std::endl;
         return;

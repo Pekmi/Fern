@@ -61,6 +61,98 @@
                     </StackPanel>
                 </Border>
 
+                <!-- SECTION MOTEUR AVANCE (Sous Moteur) -->
+                <TextBlock Text="Moteur avancé" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,24,0,12"/>
+                <Border Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="12" Padding="24" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                    <StackPanel Spacing="18">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Codec vidéo" Margin="0,0,0,8"/>
+                                <ComboBox x:Name="VideoCodecComboBox" HorizontalAlignment="Stretch" SelectionChanged="AdvancedSetting_Changed">
+                                    <ComboBoxItem Content="H.264" Tag="H264"/>
+                                    <ComboBoxItem Content="HEVC / H.265" Tag="HEVC"/>
+                                </ComboBox>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="Profil H.264" Margin="0,0,0,8"/>
+                                <ComboBox x:Name="EncoderProfileComboBox" HorizontalAlignment="Stretch" SelectionChanged="AdvancedSetting_Changed">
+                                    <ComboBoxItem Content="High" Tag="High"/>
+                                    <ComboBoxItem Content="Main" Tag="Main"/>
+                                </ComboBox>
+                            </StackPanel>
+                        </Grid>
+
+                        <StackPanel>
+                            <TextBlock Text="Contrôle du débit" Margin="0,0,0,8"/>
+                            <ComboBox x:Name="RateControlComboBox" HorizontalAlignment="Stretch" SelectionChanged="AdvancedSetting_Changed">
+                                <ComboBoxItem Content="VBR contraint" Tag="VBR"/>
+                                <ComboBoxItem Content="CBR" Tag="CBR"/>
+                                <ComboBoxItem Content="Low delay VBR" Tag="LowDelayVBR"/>
+                            </ComboBox>
+                        </StackPanel>
+
+                        <StackPanel>
+                            <Grid>
+                                <TextBlock Text="Pic VBR maximum" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding ElementName=MaxBitrateMultiplierSlider, Path=Value, Converter={StaticResource StringFormatConverter}, ConverterParameter='\{0\}%'}" HorizontalAlignment="Right" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </Grid>
+                            <Slider x:Name="MaxBitrateMultiplierSlider" Minimum="100" Maximum="400" StepFrequency="25" TickFrequency="25" Value="200"/>
+                        </StackPanel>
+
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <Grid>
+                                    <TextBlock Text="GOP" VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding ElementName=GopSlider, Path=Value, Converter={StaticResource StringFormatConverter}, ConverterParameter='\{0\}s'}" HorizontalAlignment="Right" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                </Grid>
+                                <Slider x:Name="GopSlider" Minimum="1" Maximum="10" StepFrequency="1" TickFrequency="1" Value="2"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <Grid>
+                                    <TextBlock Text="B-frames" VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding ElementName=BFramesSlider, Path=Value, Converter={StaticResource StringFormatConverter}, ConverterParameter='\{0\}'}" HorizontalAlignment="Right" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                </Grid>
+                                <Slider x:Name="BFramesSlider" Minimum="0" Maximum="4" StepFrequency="1" TickFrequency="1" Value="2"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <Grid>
+                                    <TextBlock Text="Qualité / vitesse" VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding ElementName=QualityVsSpeedSlider, Path=Value, Converter={StaticResource StringFormatConverter}, ConverterParameter='\{0\}'}" HorizontalAlignment="Right" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                </Grid>
+                                <Slider x:Name="QualityVsSpeedSlider" Minimum="0" Maximum="100" StepFrequency="10" TickFrequency="10" Value="70"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <Grid>
+                                    <TextBlock Text="Index encodeur" VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding ElementName=EncoderIndexSlider, Path=Value, Converter={StaticResource StringFormatConverter}, ConverterParameter='\{0\}'}" HorizontalAlignment="Right" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                </Grid>
+                                <Slider x:Name="EncoderIndexSlider" Minimum="0" Maximum="8" StepFrequency="1" TickFrequency="1" Value="0"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <ToggleSwitch x:Name="LowLatencyToggle"
+                                      Header="Faible latence"
+                                      OffContent="Qualité"
+                                      OnContent="Latence basse"
+                                      Toggled="AdvancedSetting_Changed"/>
+                    </StackPanel>
+                </Border>
+
                 <!-- SECTION MICRO (Sous Moteur) -->
                 <TextBlock Text="Micro" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,24,0,12"/>
                 <Border Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="12" Padding="24" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">

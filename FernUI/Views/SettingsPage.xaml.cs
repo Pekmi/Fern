@@ -44,6 +44,15 @@ namespace FernUI.Views
             FpsSlider.Value = settings.FPS;
             PathTextBox.Text = SettingsService.NormalizeStoragePath(settings.StoragePath);
             HotkeyTextBox.Text = settings.Hotkey;
+            SelectComboBoxItemByTag(VideoCodecComboBox, settings.VideoCodec);
+            SelectComboBoxItemByTag(EncoderProfileComboBox, settings.EncoderProfile);
+            SelectComboBoxItemByTag(RateControlComboBox, settings.RateControl);
+            MaxBitrateMultiplierSlider.Value = settings.MaxBitrateMultiplier;
+            GopSlider.Value = settings.GopSeconds;
+            BFramesSlider.Value = settings.BFrames;
+            LowLatencyToggle.IsOn = settings.LowLatency;
+            QualityVsSpeedSlider.Value = settings.QualityVsSpeed;
+            EncoderIndexSlider.Value = settings.EncoderIndex;
         }
 
         private void LoadMicrophones()
@@ -94,6 +103,11 @@ namespace FernUI.Views
             BufferSlider.ValueChanged += (s, e) => TriggerSave();
             BitrateSlider.ValueChanged += (s, e) => TriggerSave();
             FpsSlider.ValueChanged += (s, e) => TriggerSave();
+            MaxBitrateMultiplierSlider.ValueChanged += (s, e) => TriggerSave();
+            GopSlider.ValueChanged += (s, e) => TriggerSave();
+            BFramesSlider.ValueChanged += (s, e) => TriggerSave();
+            QualityVsSpeedSlider.ValueChanged += (s, e) => TriggerSave();
+            EncoderIndexSlider.ValueChanged += (s, e) => TriggerSave();
         }
 
         private void TriggerSave()
@@ -112,6 +126,15 @@ namespace FernUI.Views
             settings.FPS = (int)FpsSlider.Value;
             settings.StoragePath = SettingsService.NormalizeStoragePath(PathTextBox.Text);
             settings.Hotkey = string.IsNullOrWhiteSpace(HotkeyTextBox.Text) ? "Alt+Shift+F9" : HotkeyTextBox.Text;
+            settings.VideoCodec = GetSelectedComboBoxTag(VideoCodecComboBox, "H264");
+            settings.EncoderProfile = GetSelectedComboBoxTag(EncoderProfileComboBox, "High");
+            settings.RateControl = GetSelectedComboBoxTag(RateControlComboBox, "VBR");
+            settings.MaxBitrateMultiplier = (int)MaxBitrateMultiplierSlider.Value;
+            settings.GopSeconds = (int)GopSlider.Value;
+            settings.BFrames = (int)BFramesSlider.Value;
+            settings.LowLatency = LowLatencyToggle.IsOn;
+            settings.QualityVsSpeed = (int)QualityVsSpeedSlider.Value;
+            settings.EncoderIndex = (int)EncoderIndexSlider.Value;
             if (MicrophoneComboBox.SelectedItem is MicrophoneDeviceInfo microphone)
             {
                 settings.MicrophoneDeviceId = microphone.Id;
@@ -121,6 +144,36 @@ namespace FernUI.Views
 
             PathTextBox.Text = settings.StoragePath;
             HotkeyTextBox.Text = settings.Hotkey;
+        }
+
+        private void AdvancedSetting_Changed(object sender, object e)
+        {
+            TriggerSave();
+        }
+
+        private static void SelectComboBoxItemByTag(ComboBox comboBox, string tag)
+        {
+            foreach (object item in comboBox.Items)
+            {
+                if (item is ComboBoxItem comboBoxItem &&
+                    string.Equals(comboBoxItem.Tag?.ToString(), tag, StringComparison.OrdinalIgnoreCase))
+                {
+                    comboBox.SelectedItem = comboBoxItem;
+                    return;
+                }
+            }
+
+            if (comboBox.Items.Count > 0)
+            {
+                comboBox.SelectedIndex = 0;
+            }
+        }
+
+        private static string GetSelectedComboBoxTag(ComboBox comboBox, string fallback)
+        {
+            return comboBox.SelectedItem is ComboBoxItem item && item.Tag is not null
+                ? item.Tag.ToString() ?? fallback
+                : fallback;
         }
 
         private void SetupMicrophoneMeter()

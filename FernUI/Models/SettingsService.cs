@@ -18,6 +18,15 @@ namespace FernUI.Models
         public string Hotkey { get; set; } = "Alt+Shift+F9";
         public string MicrophoneDeviceId { get; set; } = "";
         public string MicrophoneDeviceName { get; set; } = "";
+        public string VideoCodec { get; set; } = "H264";
+        public string EncoderProfile { get; set; } = "High";
+        public string RateControl { get; set; } = "VBR";
+        public int MaxBitrateMultiplier { get; set; } = 200;
+        public int GopSeconds { get; set; } = 2;
+        public int BFrames { get; set; } = 2;
+        public bool LowLatency { get; set; } = false;
+        public int QualityVsSpeed { get; set; } = 70;
+        public int EncoderIndex { get; set; } = 0;
 
         private readonly string _filePath;
 
@@ -66,6 +75,15 @@ namespace FernUI.Models
                 bool sawHotkey = false;
                 bool sawMicrophoneDeviceId = false;
                 bool sawMicrophoneDeviceName = false;
+                bool sawVideoCodec = false;
+                bool sawEncoderProfile = false;
+                bool sawRateControl = false;
+                bool sawMaxBitrateMultiplier = false;
+                bool sawGopSeconds = false;
+                bool sawBFrames = false;
+                bool sawLowLatency = false;
+                bool sawQualityVsSpeed = false;
+                bool sawEncoderIndex = false;
                 string loadedStoragePath = StoragePath;
 
                 foreach (var line in File.ReadAllLines(_filePath))
@@ -103,13 +121,52 @@ namespace FernUI.Models
                             MicrophoneDeviceName = value;
                             sawMicrophoneDeviceName = true;
                             break;
+                        case "VideoCodec":
+                            VideoCodec = value;
+                            sawVideoCodec = true;
+                            break;
+                        case "EncoderProfile":
+                            EncoderProfile = value;
+                            sawEncoderProfile = true;
+                            break;
+                        case "RateControl":
+                            RateControl = value;
+                            sawRateControl = true;
+                            break;
+                        case "MaxBitrateMultiplier":
+                            if (int.TryParse(value, out int mbm)) MaxBitrateMultiplier = mbm;
+                            sawMaxBitrateMultiplier = true;
+                            break;
+                        case "GopSeconds":
+                            if (int.TryParse(value, out int gop)) GopSeconds = gop;
+                            sawGopSeconds = true;
+                            break;
+                        case "BFrames":
+                            if (int.TryParse(value, out int bFrames)) BFrames = bFrames;
+                            sawBFrames = true;
+                            break;
+                        case "LowLatency":
+                            LowLatency = ParseBool(value);
+                            sawLowLatency = true;
+                            break;
+                        case "QualityVsSpeed":
+                            if (int.TryParse(value, out int qvs)) QualityVsSpeed = qvs;
+                            sawQualityVsSpeed = true;
+                            break;
+                        case "EncoderIndex":
+                            if (int.TryParse(value, out int encoderIndex)) EncoderIndex = encoderIndex;
+                            sawEncoderIndex = true;
+                            break;
                     }
                 }
 
                 StoragePath = NormalizeStoragePath(StoragePath);
                 if (string.IsNullOrWhiteSpace(Hotkey)) Hotkey = "Alt+Shift+F9";
+                NormalizeAdvancedEngineSettings();
 
                 if (!sawHotkey || !sawMicrophoneDeviceId || !sawMicrophoneDeviceName ||
+                    !sawVideoCodec || !sawEncoderProfile || !sawRateControl || !sawMaxBitrateMultiplier ||
+                    !sawGopSeconds || !sawBFrames || !sawLowLatency || !sawQualityVsSpeed || !sawEncoderIndex ||
                     !string.Equals(loadedStoragePath, StoragePath, StringComparison.OrdinalIgnoreCase))
                 {
                     Save();
@@ -119,6 +176,7 @@ namespace FernUI.Models
             {
                 StoragePath = NormalizeStoragePath(StoragePath);
                 if (string.IsNullOrWhiteSpace(Hotkey)) Hotkey = "Alt+Shift+F9";
+                NormalizeAdvancedEngineSettings();
             }
         }
 
@@ -128,6 +186,7 @@ namespace FernUI.Models
             {
                 StoragePath = NormalizeStoragePath(StoragePath);
                 if (string.IsNullOrWhiteSpace(Hotkey)) Hotkey = "Alt+Shift+F9";
+                NormalizeAdvancedEngineSettings();
 
                 var lines = new[]
                 {
@@ -137,7 +196,16 @@ namespace FernUI.Models
                     $"StoragePath={StoragePath}",
                     $"Hotkey={Hotkey}",
                     $"MicrophoneDeviceId={MicrophoneDeviceId}",
-                    $"MicrophoneDeviceName={MicrophoneDeviceName}"
+                    $"MicrophoneDeviceName={MicrophoneDeviceName}",
+                    $"VideoCodec={VideoCodec}",
+                    $"EncoderProfile={EncoderProfile}",
+                    $"RateControl={RateControl}",
+                    $"MaxBitrateMultiplier={MaxBitrateMultiplier}",
+                    $"GopSeconds={GopSeconds}",
+                    $"BFrames={BFrames}",
+                    $"LowLatency={LowLatency.ToString().ToLowerInvariant()}",
+                    $"QualityVsSpeed={QualityVsSpeed}",
+                    $"EncoderIndex={EncoderIndex}"
                 };
                 File.WriteAllLines(_filePath, lines);
             }
@@ -145,6 +213,40 @@ namespace FernUI.Models
             {
                 // Settings must never prevent the UI from opening.
             }
+        }
+
+        private static bool ParseBool(string value)
+        {
+            return value.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+                   value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                   value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+                   value.Equals("on", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string CompactToken(string value)
+        {
+            return new string(value
+                .Where(c => c != '-' && c != '_' && c != '.' && !char.IsWhiteSpace(c))
+                .Select(char.ToLowerInvariant)
+                .ToArray());
+        }
+
+        private void NormalizeAdvancedEngineSettings()
+        {
+            string codec = CompactToken(VideoCodec);
+            VideoCodec = codec is "hevc" or "h265" ? "HEVC" : "H264";
+            EncoderProfile = CompactToken(EncoderProfile) == "main" ? "Main" : "High";
+            string rateControl = CompactToken(RateControl);
+            RateControl = rateControl == "cbr"
+                ? "CBR"
+                : rateControl == "lowdelayvbr"
+                    ? "LowDelayVBR"
+                    : "VBR";
+            MaxBitrateMultiplier = Math.Clamp(MaxBitrateMultiplier, 100, 400);
+            GopSeconds = Math.Clamp(GopSeconds, 1, 10);
+            BFrames = Math.Clamp(BFrames, 0, 4);
+            QualityVsSpeed = Math.Clamp(QualityVsSpeed, 0, 100);
+            EncoderIndex = Math.Max(0, EncoderIndex);
         }
 
         public static Task MoveStorageContentsAsync(string sourcePath, string destinationPath)
