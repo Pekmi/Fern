@@ -36,7 +36,51 @@ namespace FernUI.Models
 
         public static bool IsVideoFile(string path)
         {
-            return VideoExtensions.Contains(Path.GetExtension(path));
+            return VideoExtensions.Contains(Path.GetExtension(path)) && !IsFernAudioTempFile(path);
+        }
+
+        public static bool IsFernAudioTempFile(string path)
+        {
+            string fileName = Path.GetFileName(path);
+            return fileName.Contains(".fern_audio.tmp", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static void DeleteFernAudioTempFiles()
+        {
+            string storagePath = SettingsService.NormalizeStoragePath(SettingsService.Instance.StoragePath);
+
+            try
+            {
+                if (!Directory.Exists(storagePath)) return;
+
+                foreach (string path in Directory.EnumerateFiles(storagePath)
+                    .Where(IsFernAudioTempFile))
+                {
+                    TryDeleteFile(path);
+                }
+            }
+            catch (IOException)
+            {
+                // Cleanup is best-effort; the gallery filter still hides these files.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Cleanup is best-effort; the gallery filter still hides these files.
+            }
+        }
+
+        private static void TryDeleteFile(string path)
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
         }
 
         public static List<ClipModel> GetCachedClips()

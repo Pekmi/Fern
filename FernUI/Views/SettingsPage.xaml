@@ -25,11 +25,10 @@
             </Grid.ColumnDefinitions>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
-                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
             <!-- SECTION MOTEUR VIDÉO (Colonne Gauche, Haute) -->
-            <StackPanel Grid.Row="0" Grid.Column="0" Grid.RowSpan="2">
+            <StackPanel Grid.Row="0" Grid.Column="0">
                 <TextBlock Text="Moteur Vidéo &amp; Audio" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,0,0,12"/>
                 <Border Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="12" Padding="24" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <StackPanel Spacing="24">
@@ -59,6 +58,43 @@
                             <Slider x:Name="BitrateSlider" Minimum="2" Maximum="50" Value="15"/>
                             <TextBlock Text="Un bitrate plus élevé augmente la qualité mais aussi la taille des fichiers." Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                         </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- SECTION MICRO (Sous Moteur) -->
+                <TextBlock Text="Micro" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,24,0,12"/>
+                <Border Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="12" Padding="24" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                    <StackPanel Spacing="16">
+                        <StackPanel>
+                            <TextBlock Text="Entree micro" Margin="0,0,0,8"/>
+                            <ComboBox x:Name="MicrophoneComboBox"
+                                      HorizontalAlignment="Stretch"
+                                      PlaceholderText="Aucun micro detecte"
+                                      DisplayMemberPath="Name"
+                                      SelectionChanged="MicrophoneComboBox_SelectionChanged"/>
+                        </StackPanel>
+
+                        <StackPanel>
+                            <Grid Margin="0,0,0,8">
+                                <TextBlock Text="Signal capte" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="MicrophoneLevelText"
+                                           Text="0%"
+                                           HorizontalAlignment="Right"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            </Grid>
+                            <ProgressBar x:Name="MicrophoneLevelBar"
+                                         Minimum="0"
+                                         Maximum="100"
+                                         Value="0"
+                                         Height="6"
+                                         HorizontalAlignment="Stretch"/>
+                        </StackPanel>
+
+                        <TextBlock x:Name="MicrophoneStatusText"
+                                   Text="Selectionnez un micro pour tester le signal."
+                                   Style="{ThemeResource CaptionTextBlockStyle}"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextWrapping="Wrap"/>
                     </StackPanel>
                 </Border>
             </StackPanel>
@@ -91,11 +127,9 @@
                         </StackPanel>
                     </StackPanel>
                 </Border>
-            </StackPanel>
 
-            <!-- SECTION IA (Colonne Droite, Milieu) -->
-            <StackPanel Grid.Row="1" Grid.Column="1" VerticalAlignment="Top">
-                <TextBlock Text="Intelligence Artificielle" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,0,0,12"/>
+                <!-- SECTION IA (Sous Raccourcis & Chemins) -->
+                <TextBlock Text="Intelligence Artificielle" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,24,0,12"/>
                 <Border Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="12" Padding="24" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <StackPanel Spacing="12">
                         <ToggleSwitch Header="Tri Auto (Modèle Local)" IsOn="True"/>

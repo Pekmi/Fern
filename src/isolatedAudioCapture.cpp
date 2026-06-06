@@ -7,6 +7,8 @@
 #include <mmdeviceapi.h>
 #include <mferror.h>
 #include <propvarutil.h>
+#include <ks.h>
+#include <ksmedia.h>
 
 #include <algorithm>
 #include <chrono>
@@ -14,6 +16,7 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <utility>
 
 #include "../include/fern/clock.h"
 #include "../include/fern/isolatedAudioCapture.h"
@@ -23,6 +26,7 @@ using namespace Microsoft::WRL;
 namespace {
 constexpr UINT32 kFramesPerSample = 1024;
 constexpr LONGLONG kRealtimeSilenceLagHns = 2000000LL;
+constexpr LONGLONG kInitialTimestampTrustHns = 5000000LL;
 constexpr short kAudibleSampleThreshold = 512;
 constexpr LONGLONG kActivityMergeGapHns = 500000LL;
 
@@ -70,11 +74,26 @@ private:
 
 IsolatedAudioCapture::IsolatedAudioCapture(DWORD targetPid)
     : m_targetPid(targetPid),
+      m_useInputDevice(false),
       m_isCapturing(false),
       m_activationFinishedEvent(NULL),
       m_masterStartHns(0),
       m_timelineFramesWritten(0),
-      m_framesSent(0) {
+      m_framesSent(0),
+      m_hasAlignedFirstPacket(false) {
+    std::memset(&m_mixFormat, 0, sizeof(m_mixFormat));
+}
+
+IsolatedAudioCapture::IsolatedAudioCapture(std::wstring captureDeviceId)
+    : m_targetPid(0),
+      m_useInputDevice(true),
+      m_captureDeviceId(std::move(captureDeviceId)),
+      m_isCapturing(false),
+      m_activationFinishedEvent(NULL),
+      m_masterStartHns(0),
+      m_timelineFramesWritten(0),
+      m_framesSent(0),
+      m_hasAlignedFirstPacket(false) {
     std::memset(&m_mixFormat, 0, sizeof(m_mixFormat));
 }
 
@@ -90,6 +109,7 @@ void IsolatedAudioCapture::SetStartTime(UINT64 rawQpc, LONGLONG timelineOffsetHn
     const UINT64 offsetFrames = HnsToFrame(std::max<LONGLONG>(0, timelineOffsetHns));
     m_timelineFramesWritten = offsetFrames;
     m_framesSent = offsetFrames;
+    m_hasAlignedFirstPacket = false;
     m_masterStartHns.store(static_cast<UINT64>(fern::RawQpcToHns(static_cast<LONGLONG>(rawQpc))), std::memory_order_release);
 }
 
@@ -108,6 +128,7 @@ HRESULT IsolatedAudioCapture::Start() {
         m_activityRanges.clear();
         m_timelineFramesWritten = 0;
         m_framesSent = 0;
+        m_hasAlignedFirstPacket = false;
         m_masterStartHns.store(0, std::memory_order_release);
     }
 
@@ -139,8 +160,24 @@ HRESULT IsolatedAudioCapture::Start() {
         if (FAILED(hr)) return hr;
 
         ComPtr<IMMDevice> pDev;
-        hr = pEnum->GetDefaultAudioEndpoint(eRender, eConsole, &pDev);
-        if (FAILED(hr)) return hr;
+        if (m_useInputDevice) {
+            if (!m_captureDeviceId.empty()) {
+                hr = pEnum->GetDevice(m_captureDeviceId.c_str(), &pDev);
+                if (FAILED(hr) || !pDev) {
+                    std::wcerr << L"AUDIO: microphone device unavailable, falling back to default capture endpoint. 0x"
+                               << std::hex << hr << std::dec << std::endl;
+                    pDev.Reset();
+                }
+            }
+
+            if (!pDev) {
+                hr = pEnum->GetDefaultAudioEndpoint(eCapture, eConsole, &pDev);
+                if (FAILED(hr)) return hr;
+            }
+        } else {
+            hr = pEnum->GetDefaultAudioEndpoint(eRender, eConsole, &pDev);
+            if (FAILED(hr)) return hr;
+        }
 
         hr = pDev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, NULL, reinterpret_cast<void**>(m_audioClient.GetAddressOf()));
         if (FAILED(hr)) return hr;
@@ -149,6 +186,7 @@ HRESULT IsolatedAudioCapture::Start() {
     if (!m_audioClient) return E_FAIL;
 
     const bool isProcessLoopback = m_targetPid != 0;
+    const bool isInputCapture = m_useInputDevice && !isProcessLoopback;
     if (isProcessLoopback) {
         SetPcm16StereoFormat(m_mixFormat, 48000);
     } else {
@@ -168,7 +206,7 @@ HRESULT IsolatedAudioCapture::Start() {
 
     hr = m_audioClient->Initialize(
         AUDCLNT_SHAREMODE_SHARED,
-        AUDCLNT_STREAMFLAGS_LOOPBACK,
+        isInputCapture ? 0 : AUDCLNT_STREAMFLAGS_LOOPBACK,
         1000000,
         0,
         reinterpret_cast<WAVEFORMATEX*>(&m_mixFormat),
@@ -224,14 +262,16 @@ bool IsolatedAudioCapture::IsFloatMixFormat() const {
     const WAVEFORMATEX& fmt = m_mixFormat.Format;
     if (fmt.wFormatTag == WAVE_FORMAT_IEEE_FLOAT) return true;
     return fmt.wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-           IsEqualGUID(m_mixFormat.SubFormat, MFAudioFormat_Float);
+           (IsEqualGUID(m_mixFormat.SubFormat, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) ||
+            IsEqualGUID(m_mixFormat.SubFormat, MFAudioFormat_Float));
 }
 
 bool IsolatedAudioCapture::IsPcmMixFormat() const {
     const WAVEFORMATEX& fmt = m_mixFormat.Format;
     if (fmt.wFormatTag == WAVE_FORMAT_PCM) return true;
     return fmt.wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-           IsEqualGUID(m_mixFormat.SubFormat, MFAudioFormat_PCM);
+           (IsEqualGUID(m_mixFormat.SubFormat, KSDATAFORMAT_SUBTYPE_PCM) ||
+            IsEqualGUID(m_mixFormat.SubFormat, MFAudioFormat_PCM));
 }
 
 void IsolatedAudioCapture::AppendSilenceUntilFrameLocked(UINT64 targetFrame) {
@@ -366,6 +406,11 @@ void IsolatedAudioCapture::AppendPacketLocked(const BYTE* data, UINT32 frames, D
     const UINT32 sampleRate = m_mixFormat.Format.nSamplesPerSec;
     if (masterStartHns == 0 || sampleRate == 0 || frames == 0) return;
 
+    if (m_useInputDevice) {
+        AppendContinuousPacketLocked(data, frames, flags, packetQpcHns);
+        return;
+    }
+
     UINT64 packetStartHns = packetQpcHns;
     if ((flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) || packetStartHns == 0) {
         const UINT64 nowHns = static_cast<UINT64>(fern::CurrentQpcHns());
@@ -421,6 +466,41 @@ void IsolatedAudioCapture::AppendPacketLocked(const BYTE* data, UINT32 frames, D
     const UINT32 framesToAppend = frames - frameOffset;
     AppendConvertedFramesLocked(data, frameOffset, framesToAppend, flags);
     m_timelineFramesWritten += framesToAppend;
+}
+
+void IsolatedAudioCapture::AppendContinuousPacketLocked(const BYTE* data, UINT32 frames, DWORD flags, UINT64 packetQpcHns) {
+    if (frames == 0) return;
+
+    if (!m_hasAlignedFirstPacket) {
+        m_hasAlignedFirstPacket = true;
+
+        const UINT64 masterStartHns = m_masterStartHns.load(std::memory_order_acquire);
+        if (masterStartHns != 0 &&
+            packetQpcHns != 0 &&
+            (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) == 0) {
+            if (packetQpcHns >= masterStartHns) {
+                const UINT64 deltaHns = packetQpcHns - masterStartHns;
+                if (deltaHns <= static_cast<UINT64>(kInitialTimestampTrustHns)) {
+                    AppendSilenceUntilFrameLocked(HnsToFrame(static_cast<LONGLONG>(deltaHns)));
+                }
+            } else {
+                const UINT64 deltaHns = masterStartHns - packetQpcHns;
+                if (deltaHns <= static_cast<UINT64>(kInitialTimestampTrustHns)) {
+                    const UINT64 trimFrames = HnsToFrame(deltaHns);
+                    if (trimFrames >= frames) return;
+
+                    const UINT32 frameOffset = static_cast<UINT32>(trimFrames);
+                    const UINT32 framesToAppend = frames - frameOffset;
+                    AppendConvertedFramesLocked(data, frameOffset, framesToAppend, flags);
+                    m_timelineFramesWritten += framesToAppend;
+                    return;
+                }
+            }
+        }
+    }
+
+    AppendConvertedFramesLocked(data, 0, frames, flags);
+    m_timelineFramesWritten += frames;
 }
 
 HRESULT IsolatedAudioCapture::GetAudioSample(ComPtr<IMFSample>& pSample) {

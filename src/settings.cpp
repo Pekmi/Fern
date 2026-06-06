@@ -58,6 +58,8 @@ void Settings::Load(bool log) {
         storagePath = L"C:\\Videos\\Fern"; 
     }
     hotkey = L"Alt+Shift+F9";
+    microphoneDeviceId.clear();
+    microphoneDeviceName.clear();
 
     // 2. Tenter de charger le fichier
     auto path = GetSettingsPath();
@@ -81,6 +83,8 @@ void Settings::Load(bool log) {
 
     std::wstring line;
     bool sawHotkey = false;
+    bool sawMicrophoneDeviceId = false;
+    bool sawMicrophoneDeviceName = false;
     std::wstring loadedStoragePath = storagePath;
     while (std::getline(file, line)) {
         size_t pos = line.find(L'=');
@@ -102,6 +106,14 @@ void Settings::Load(bool log) {
                     hotkey = value;
                     sawHotkey = true;
                 }
+                else if (key == L"MicrophoneDeviceId") {
+                    microphoneDeviceId = value;
+                    sawMicrophoneDeviceId = true;
+                }
+                else if (key == L"MicrophoneDeviceName") {
+                    microphoneDeviceName = value;
+                    sawMicrophoneDeviceName = true;
+                }
             } catch (...) {
                 std::wcerr << L"SETTINGS: Erreur de parsing pour " << key << std::endl;
             }
@@ -111,13 +123,15 @@ void Settings::Load(bool log) {
     storagePath = EnsureFernLeaf(storagePath).wstring();
     if (hotkey.empty()) hotkey = L"Alt+Shift+F9";
 
-    if (!sawHotkey || ToLower(loadedStoragePath) != ToLower(storagePath)) {
+    if (!sawHotkey || !sawMicrophoneDeviceId || !sawMicrophoneDeviceName ||
+        ToLower(loadedStoragePath) != ToLower(storagePath)) {
         Save();
     }
 
     if (log) {
         std::wcout << L"SETTINGS: Charger. StoragePath=" << storagePath
-                   << L" Hotkey=" << hotkey << std::endl;
+                   << L" Hotkey=" << hotkey
+                   << L" MicrophoneDeviceName=" << microphoneDeviceName << std::endl;
     }
 }
 
@@ -131,6 +145,8 @@ void Settings::Save() {
         file << L"Bitrate=" << bitrate << L"\n";
         file << L"StoragePath=" << EnsureFernLeaf(storagePath).wstring() << L"\n";
         file << L"Hotkey=" << (hotkey.empty() ? L"Alt+Shift+F9" : hotkey) << L"\n";
+        file << L"MicrophoneDeviceId=" << microphoneDeviceId << L"\n";
+        file << L"MicrophoneDeviceName=" << microphoneDeviceName << L"\n";
         file.close();
     } else {
         std::wcerr << L"SETTINGS ERROR: Impossible d'ouvrir en ecriture: " << path.wstring() << std::endl;

@@ -8,6 +8,8 @@ struct Settings {
     int bitrate = 15;
     std::wstring storagePath = L"C:\\Videos\\Fern";
     std::wstring hotkey = L"Alt+Shift+F9";
+    std::wstring microphoneDeviceId;
+    std::wstring microphoneDeviceName;
 
     void Load(bool log = true);
     void Save();

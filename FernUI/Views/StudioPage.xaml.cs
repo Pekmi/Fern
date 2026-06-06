@@ -43,7 +43,8 @@ namespace FernUI.Views
         private Dictionary<int, AudioTrackManifestInfo> _audioTrackManifest = new();
         private readonly Dictionary<int, MediaPlayer> _audioPlayers = new();
         private readonly Dictionary<int, int> _audioPlayerTrackSelections = new();
-        private double _masterVolume = 1.0;
+        private double _masterVolume = 0.3;
+        private bool _isUpdatingMasterVolumeControls;
         private bool _isMuted;
         private bool _isTearingDownStudioSession;
         private TypedEventHandler<MediaPlaybackItem, IVectorChangedEventArgs>? _playbackItemAudioTracksChangedHandler;
@@ -67,6 +68,7 @@ namespace FernUI.Views
         {
             this.InitializeComponent();
 
+            SetMasterVolumePercent(30, false);
             AudioTracksListView.ItemsSource = AudioTracks;
             EnsureVideoPlayer();
 
@@ -202,8 +204,9 @@ namespace FernUI.Views
             {
                 _selectedClip = clip;
                 ClipTitleTextBlock.Text = _selectedClip.Title;
-                GameBadge.Text = _selectedClip.Game.ToUpper();
-                DurationText.Text = $"{_selectedClip.Date} - {_selectedClip.Duration}";
+                DurationText.Text = string.Join("   ", new[] { _selectedClip.Date, _selectedClip.Duration }
+                    .Where(value => !string.IsNullOrWhiteSpace(value)));
+                SetMasterVolumePercent(30, false);
 
                 if (!string.IsNullOrEmpty(_selectedClip.FilePath))
                 {
@@ -602,7 +605,7 @@ namespace FernUI.Views
                     }
                 });
 
-                _lastExportedFile = await StudioExportService.ExportAsync(sourcePath, tracks, targetSizeMb, duration, progress);
+                _lastExportedFile = await StudioExportService.ExportAsync(sourcePath, tracks, targetSizeMb, duration, _masterVolume, progress);
                 ShowExportCompleteContent(_lastExportedFile);
             }
             catch (Exception ex)
@@ -1329,8 +1332,43 @@ namespace FernUI.Views
 
         private void VolumeSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
         {
-            _masterVolume = e.NewValue / 100.0;
-            ApplyAllAudioVolumes();
+            if (_isUpdatingMasterVolumeControls) return;
+
+            SetMasterVolumePercent(e.NewValue);
+        }
+
+        private void SetMasterVolumePercent(double percent, bool applyVolumes = true)
+        {
+            percent = Math.Clamp(percent, 0.0, 100.0);
+            _masterVolume = percent / 100.0;
+
+            _isUpdatingMasterVolumeControls = true;
+            try
+            {
+                if (VolumeSlider != null && Math.Abs(VolumeSlider.Value - percent) > 0.01)
+                {
+                    VolumeSlider.Value = percent;
+                }
+
+                if (MasterVolumeSlider != null && Math.Abs(MasterVolumeSlider.Value - percent) > 0.01)
+                {
+                    MasterVolumeSlider.Value = percent;
+                }
+
+                if (MasterVolumeText != null)
+                {
+                    MasterVolumeText.Text = $"{percent:0}%";
+                }
+            }
+            finally
+            {
+                _isUpdatingMasterVolumeControls = false;
+            }
+
+            if (applyVolumes)
+            {
+                ApplyAllAudioVolumes();
+            }
         }
 
         private void FullscreenButton_Click(object sender, RoutedEventArgs e)

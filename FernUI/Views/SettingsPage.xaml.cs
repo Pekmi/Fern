@@ -4,7 +4,9 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Input;
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Windows.Storage.Pickers;
@@ -16,14 +18,22 @@ namespace FernUI.Views
     public sealed partial class SettingsPage : Page
     {
         private DispatcherTimer _debounceTimer = null!;
+        private DispatcherTimer _microphoneLevelTimer = null!;
+        private MicrophoneLevelMeter? _microphoneMeter;
+        private IReadOnlyList<MicrophoneDeviceInfo> _microphones = Array.Empty<MicrophoneDeviceInfo>();
+        private double _displayedMicrophoneLevel;
         private bool _isLoading = true;
 
         public SettingsPage()
         {
             InitializeComponent();
             LoadSettings();
+            LoadMicrophones();
             SetupAutoSave();
+            SetupMicrophoneMeter();
+            Unloaded += SettingsPage_Unloaded;
             _isLoading = false;
+            StartMicrophoneMeterForSelection();
         }
 
         private void LoadSettings()
@@ -34,6 +44,42 @@ namespace FernUI.Views
             FpsSlider.Value = settings.FPS;
             PathTextBox.Text = SettingsService.NormalizeStoragePath(settings.StoragePath);
             HotkeyTextBox.Text = settings.Hotkey;
+        }
+
+        private void LoadMicrophones()
+        {
+            try
+            {
+                _microphones = MicrophoneDeviceService.GetCaptureDevices();
+                MicrophoneComboBox.ItemsSource = _microphones;
+
+                if (_microphones.Count == 0)
+                {
+                    MicrophoneStatusText.Text = "Aucun micro actif detecte.";
+                    return;
+                }
+
+                var settings = SettingsService.Instance;
+                MicrophoneDeviceInfo? selected = _microphones.FirstOrDefault(device =>
+                    string.Equals(device.Id, settings.MicrophoneDeviceId, StringComparison.OrdinalIgnoreCase));
+
+                selected ??= _microphones.FirstOrDefault(device => device.IsDefault) ?? _microphones[0];
+                MicrophoneComboBox.SelectedItem = selected;
+
+                if (!string.Equals(settings.MicrophoneDeviceId, selected.Id, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(settings.MicrophoneDeviceName, selected.Name, StringComparison.Ordinal))
+                {
+                    settings.MicrophoneDeviceId = selected.Id;
+                    settings.MicrophoneDeviceName = selected.Name;
+                    settings.Save();
+                }
+            }
+            catch (Exception ex)
+            {
+                _microphones = Array.Empty<MicrophoneDeviceInfo>();
+                MicrophoneComboBox.ItemsSource = _microphones;
+                MicrophoneStatusText.Text = $"Liste des micros indisponible: {ex.Message}";
+            }
         }
 
         private void SetupAutoSave()
@@ -66,10 +112,90 @@ namespace FernUI.Views
             settings.FPS = (int)FpsSlider.Value;
             settings.StoragePath = SettingsService.NormalizeStoragePath(PathTextBox.Text);
             settings.Hotkey = string.IsNullOrWhiteSpace(HotkeyTextBox.Text) ? "Alt+Shift+F9" : HotkeyTextBox.Text;
+            if (MicrophoneComboBox.SelectedItem is MicrophoneDeviceInfo microphone)
+            {
+                settings.MicrophoneDeviceId = microphone.Id;
+                settings.MicrophoneDeviceName = microphone.Name;
+            }
             settings.Save();
 
             PathTextBox.Text = settings.StoragePath;
             HotkeyTextBox.Text = settings.Hotkey;
+        }
+
+        private void SetupMicrophoneMeter()
+        {
+            _microphoneLevelTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
+            _microphoneLevelTimer.Tick += MicrophoneLevelTimer_Tick;
+        }
+
+        private void MicrophoneComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isLoading) return;
+
+            SaveSettings();
+            StartMicrophoneMeterForSelection();
+        }
+
+        private void StartMicrophoneMeterForSelection()
+        {
+            StopMicrophoneMeter();
+
+            if (MicrophoneComboBox.SelectedItem is not MicrophoneDeviceInfo microphone)
+            {
+                ResetMicrophoneLevel();
+                MicrophoneStatusText.Text = "Aucun micro selectionne.";
+                return;
+            }
+
+            try
+            {
+                _microphoneMeter = MicrophoneDeviceService.CreateLevelMeter(microphone.Id);
+                _displayedMicrophoneLevel = 0;
+                MicrophoneStatusText.Text = microphone.IsDefault
+                    ? "Micro par defaut pret."
+                    : "Micro pret.";
+                _microphoneLevelTimer.Start();
+            }
+            catch (Exception ex)
+            {
+                ResetMicrophoneLevel();
+                MicrophoneStatusText.Text = $"Test du micro indisponible: {ex.Message}";
+            }
+        }
+
+        private void StopMicrophoneMeter()
+        {
+            _microphoneLevelTimer?.Stop();
+            _microphoneMeter?.Dispose();
+            _microphoneMeter = null;
+        }
+
+        private void ResetMicrophoneLevel()
+        {
+            _displayedMicrophoneLevel = 0;
+            MicrophoneLevelBar.Value = 0;
+            MicrophoneLevelText.Text = "0%";
+        }
+
+        private void MicrophoneLevelTimer_Tick(object? sender, object e)
+        {
+            float peak = _microphoneMeter?.GetPeakValue() ?? 0.0f;
+            double target = Math.Sqrt(Math.Clamp(peak, 0.0f, 1.0f)) * 100.0;
+
+            _displayedMicrophoneLevel = target >= _displayedMicrophoneLevel
+                ? target
+                : _displayedMicrophoneLevel * 0.82;
+
+            if (_displayedMicrophoneLevel < 0.5) _displayedMicrophoneLevel = 0;
+
+            MicrophoneLevelBar.Value = Math.Clamp(_displayedMicrophoneLevel, 0.0, 100.0);
+            MicrophoneLevelText.Text = $"{MicrophoneLevelBar.Value:0}%";
+        }
+
+        private void SettingsPage_Unloaded(object sender, RoutedEventArgs e)
+        {
+            StopMicrophoneMeter();
         }
 
         private async void BrowseButton_Click(object sender, RoutedEventArgs e)

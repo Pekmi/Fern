@@ -9,6 +9,7 @@
 #include <wrl/client.h>
 
 #include "replay_export.h"
+#include "settings.h"
 
 #include <memory>
 #include <string>
@@ -17,6 +18,7 @@
 using Microsoft::WRL::ComPtr;
 
 class RingBuffer;
+class IsolatedAudioCapture;
 
 namespace fern {
 
@@ -25,7 +27,7 @@ public:
     MultiAppAudioCapture();
     ~MultiAppAudioCapture();
 
-    HRESULT Start();
+    HRESULT Start(const Settings& settings);
     void Stop();
 
     void SetStartTime(UINT64 rawQpc);
@@ -42,6 +44,8 @@ private:
     bool ShouldRefreshSources(LONGLONG nowHns) const;
     bool HasSource(DWORD pid) const;
     HRESULT AddSource(DWORD pid, const std::wstring& label);
+    HRESULT AddMicrophoneSource(const std::wstring& deviceId);
+    HRESULT AddCaptureSource(std::unique_ptr<IsolatedAudioCapture> capture, DWORD pid, const std::wstring& label);
 
     std::vector<std::unique_ptr<Source>> m_sources;
     bool m_isRunning;

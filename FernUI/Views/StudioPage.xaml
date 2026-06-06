@@ -113,7 +113,7 @@
                                     <Slider x:Name="VolumeSlider" 
                                             Width="120" 
                                             VerticalAlignment="Center"
-                                            Minimum="0" Maximum="100" Value="100"
+                                            Minimum="0" Maximum="100" Value="30"
                                             ValueChanged="VolumeSlider_ValueChanged"/>
                                 </StackPanel>
 
@@ -147,14 +147,37 @@
                         </Grid.RowDefinitions>
 
                         <StackPanel Grid.Row="0">
-                            <TextBlock Text="Studio" Style="{ThemeResource SubtitleTextBlockStyle}" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                            <StackPanel Orientation="Horizontal" Margin="0,0,0,24">
-                                <Border Background="{ThemeResource SystemControlBackgroundAccentBrush}" CornerRadius="4" Padding="8,2" Margin="0,0,12,0">
-                                    <TextBlock x:Name="GameBadge" Text="JEU" Foreground="White" FontSize="11" FontWeight="Bold"/>
-                                </Border>
-                                <TextBlock x:Name="DurationText" Text="00:00" Style="{ThemeResource CaptionTextBlockStyle}" VerticalAlignment="Center"/>
+                            <Grid Margin="0,0,0,24">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Studio" Style="{ThemeResource SubtitleTextBlockStyle}" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="DurationText"
+                                           Grid.Column="1"
+                                           Text="00:00"
+                                           Style="{ThemeResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           HorizontalAlignment="Right"
+                                           VerticalAlignment="Center"
+                                           TextAlignment="Right"
+                                           TextWrapping="WrapWholeWords"/>
+                            </Grid>
+                            <TextBlock Text="Pistes audio" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,0,0,12"/>
+                            <StackPanel Margin="0,0,0,16">
+                                <Grid Margin="0,0,0,4">
+                                    <TextBlock Text="Master" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                    <TextBlock x:Name="MasterVolumeText"
+                                               Text="30%"
+                                               HorizontalAlignment="Right"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                </Grid>
+                                <Slider x:Name="MasterVolumeSlider"
+                                        Minimum="0"
+                                        Maximum="100"
+                                        Value="30"
+                                        ValueChanged="VolumeSlider_ValueChanged"/>
                             </StackPanel>
-                            <TextBlock Text="Pistes audio" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,0,0,16"/>
                         </StackPanel>
                         
                         <!-- Console de Mixage -->
@@ -181,13 +204,19 @@
                         </ListView>
 
                         <StackPanel Grid.Row="2" Margin="0,24,0,0">
-                            <Button Content="Partager" HorizontalAlignment="Stretch" Padding="0,12" Margin="0,0,0,12"/>
-                            <Button x:Name="ExportButton"
-                                    Content="Exporter"
-                                    HorizontalAlignment="Stretch"
-                                    Padding="0,12"
-                                    Margin="0,0,0,12"
-                                    Click="ExportButton_Click"/>
+                            <Grid ColumnSpacing="12" Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Button Content="Partager" HorizontalAlignment="Stretch" Padding="0,12"/>
+                                <Button x:Name="ExportButton"
+                                        Grid.Column="1"
+                                        Content="Exporter"
+                                        HorizontalAlignment="Stretch"
+                                        Padding="0,12"
+                                        Click="ExportButton_Click"/>
+                            </Grid>
                             <Button x:Name="SaveButton"
                                     Style="{StaticResource AccentButtonStyle}"
                                     HorizontalAlignment="Stretch"

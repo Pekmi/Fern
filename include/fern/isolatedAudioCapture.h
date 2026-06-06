@@ -16,6 +16,7 @@
 #include <atomic>
 #include <cstdint>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -24,6 +25,7 @@ using Microsoft::WRL::ComPtr;
 class IsolatedAudioCapture {
 public:
     explicit IsolatedAudioCapture(DWORD targetPid);
+    explicit IsolatedAudioCapture(std::wstring captureDeviceId);
     ~IsolatedAudioCapture();
 
     HRESULT Start();
@@ -48,6 +50,7 @@ private:
 
     void AppendSilenceUntilFrameLocked(UINT64 targetFrame);
     void AppendPacketLocked(const BYTE* data, UINT32 frames, DWORD flags, UINT64 packetQpcHns);
+    void AppendContinuousPacketLocked(const BYTE* data, UINT32 frames, DWORD flags, UINT64 packetQpcHns);
     void AppendConvertedFramesLocked(const BYTE* data, UINT32 frameOffset, UINT32 frames, DWORD flags);
     void RecordActivityLocked(UINT64 startFrame, const short* samples, UINT32 frames);
     void AddActivityRangeLocked(UINT64 startFrame, UINT64 frames);
@@ -56,6 +59,8 @@ private:
     bool IsPcmMixFormat() const;
 
     DWORD m_targetPid;
+    bool m_useInputDevice;
+    std::wstring m_captureDeviceId;
     WAVEFORMATEXTENSIBLE m_mixFormat;
 
     ComPtr<IAudioClient> m_audioClient;
@@ -71,5 +76,6 @@ private:
     std::atomic<UINT64> m_masterStartHns;
     UINT64 m_timelineFramesWritten;
     UINT64 m_framesSent;
+    bool m_hasAlignedFirstPacket;
     std::vector<fern::AudioActivityRange> m_activityRanges;
 };

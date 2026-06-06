@@ -446,7 +446,7 @@ void RunCaptureSession(const Settings& settings) {
     RingBuffer ringBuffer(static_cast<LONGLONG>(settings.bufferDuration) * HnsPerSecond);
 
     MultiAppAudioCapture audioCapture;
-    hr = audioCapture.Start();
+    hr = audioCapture.Start(settings);
     if (FAILED(hr)) {
         std::cerr << "AUDIO: multi-app capture disabled 0x" << std::hex << hr << std::dec << std::endl;
     }

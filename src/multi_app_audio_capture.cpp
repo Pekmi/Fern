@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
+#include <utility>
 
 using Microsoft::WRL::ComPtr;
 
@@ -173,11 +174,12 @@ MultiAppAudioCapture::~MultiAppAudioCapture() {
     Stop();
 }
 
-HRESULT MultiAppAudioCapture::Start() {
+HRESULT MultiAppAudioCapture::Start(const Settings& settings) {
     if (m_isRunning) return S_FALSE;
 
     m_isRunning = true;
     m_lastRefreshHns = 0;
+    AddMicrophoneSource(settings.microphoneDeviceId);
     RefreshSources();
     return S_OK;
 }
@@ -291,10 +293,22 @@ bool MultiAppAudioCapture::HasSource(DWORD pid) const {
 
 HRESULT MultiAppAudioCapture::AddSource(DWORD pid, const std::wstring& label) {
     auto capture = std::make_unique<IsolatedAudioCapture>(pid);
+    return AddCaptureSource(std::move(capture), pid, label);
+}
+
+HRESULT MultiAppAudioCapture::AddMicrophoneSource(const std::wstring& deviceId) {
+    auto capture = std::make_unique<IsolatedAudioCapture>(deviceId);
+    return AddCaptureSource(std::move(capture), 0, L"Micro");
+}
+
+HRESULT MultiAppAudioCapture::AddCaptureSource(std::unique_ptr<IsolatedAudioCapture> capture, DWORD pid, const std::wstring& label) {
+    if (!capture) return E_POINTER;
+
     HRESULT hr = capture->Start();
     if (FAILED(hr)) {
-        std::wcerr << L"AUDIO: capture process-loopback failed for " << label
-                   << L" (pid=" << pid << L") 0x" << std::hex << hr << std::dec << std::endl;
+        std::wcerr << L"AUDIO: capture failed for " << label;
+        if (pid != 0) std::wcerr << L" (pid=" << pid << L")";
+        std::wcerr << L" 0x" << std::hex << hr << std::dec << std::endl;
         return hr;
     }
 
@@ -307,8 +321,9 @@ HRESULT MultiAppAudioCapture::AddSource(DWORD pid, const std::wstring& label) {
     ComPtr<IMFTransform> encoder;
     hr = InitializeAudioEncoder(encoder, capture->GetFormat());
     if (FAILED(hr) || !encoder) {
-        std::wcerr << L"AUDIO: encoder init failed for " << label
-                   << L" (pid=" << pid << L") 0x" << std::hex << hr << std::dec << std::endl;
+        std::wcerr << L"AUDIO: encoder init failed for " << label;
+        if (pid != 0) std::wcerr << L" (pid=" << pid << L")";
+        std::wcerr << L" 0x" << std::hex << hr << std::dec << std::endl;
         capture->Stop();
         return FAILED(hr) ? hr : E_FAIL;
     }
@@ -319,8 +334,9 @@ HRESULT MultiAppAudioCapture::AddSource(DWORD pid, const std::wstring& label) {
     ComPtr<IMFMediaType> outputType;
     hr = encoder->GetOutputCurrentType(0, &outputType);
     if (FAILED(hr) || !outputType) {
-        std::wcerr << L"AUDIO: output type unavailable for " << label
-                   << L" (pid=" << pid << L") 0x" << std::hex << hr << std::dec << std::endl;
+        std::wcerr << L"AUDIO: output type unavailable for " << label;
+        if (pid != 0) std::wcerr << L" (pid=" << pid << L")";
+        std::wcerr << L" 0x" << std::hex << hr << std::dec << std::endl;
         capture->Stop();
         return FAILED(hr) ? hr : E_FAIL;
     }
@@ -334,7 +350,9 @@ HRESULT MultiAppAudioCapture::AddSource(DWORD pid, const std::wstring& label) {
     source->outputType = outputType;
 
     std::wcout << L"AUDIO: piste " << source->streamIndex << L" -> "
-               << source->label << L" (pid=" << source->pid << L")" << std::endl;
+               << source->label;
+    if (source->pid != 0) std::wcout << L" (pid=" << source->pid << L")";
+    std::wcout << std::endl;
 
     m_sources.push_back(std::move(source));
     return S_OK;

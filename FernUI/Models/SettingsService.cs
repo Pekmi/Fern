@@ -16,6 +16,8 @@ namespace FernUI.Models
         public int Bitrate { get; set; } = 15;
         public string StoragePath { get; set; } = "";
         public string Hotkey { get; set; } = "Alt+Shift+F9";
+        public string MicrophoneDeviceId { get; set; } = "";
+        public string MicrophoneDeviceName { get; set; } = "";
 
         private readonly string _filePath;
 
@@ -62,6 +64,8 @@ namespace FernUI.Models
             try
             {
                 bool sawHotkey = false;
+                bool sawMicrophoneDeviceId = false;
+                bool sawMicrophoneDeviceName = false;
                 string loadedStoragePath = StoragePath;
 
                 foreach (var line in File.ReadAllLines(_filePath))
@@ -91,13 +95,22 @@ namespace FernUI.Models
                             Hotkey = value;
                             sawHotkey = true;
                             break;
+                        case "MicrophoneDeviceId":
+                            MicrophoneDeviceId = value;
+                            sawMicrophoneDeviceId = true;
+                            break;
+                        case "MicrophoneDeviceName":
+                            MicrophoneDeviceName = value;
+                            sawMicrophoneDeviceName = true;
+                            break;
                     }
                 }
 
                 StoragePath = NormalizeStoragePath(StoragePath);
                 if (string.IsNullOrWhiteSpace(Hotkey)) Hotkey = "Alt+Shift+F9";
 
-                if (!sawHotkey || !string.Equals(loadedStoragePath, StoragePath, StringComparison.OrdinalIgnoreCase))
+                if (!sawHotkey || !sawMicrophoneDeviceId || !sawMicrophoneDeviceName ||
+                    !string.Equals(loadedStoragePath, StoragePath, StringComparison.OrdinalIgnoreCase))
                 {
                     Save();
                 }
@@ -122,7 +135,9 @@ namespace FernUI.Models
                     $"FPS={FPS}",
                     $"Bitrate={Bitrate}",
                     $"StoragePath={StoragePath}",
-                    $"Hotkey={Hotkey}"
+                    $"Hotkey={Hotkey}",
+                    $"MicrophoneDeviceId={MicrophoneDeviceId}",
+                    $"MicrophoneDeviceName={MicrophoneDeviceName}"
                 };
                 File.WriteAllLines(_filePath, lines);
             }
