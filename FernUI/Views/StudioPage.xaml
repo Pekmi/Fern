@@ -113,7 +113,7 @@
                                     <Slider x:Name="VolumeSlider" 
                                             Width="120" 
                                             VerticalAlignment="Center"
-                                            Minimum="0" Maximum="100" Value="30"
+                                            Minimum="0" Maximum="100" Value="100"
                                             ValueChanged="VolumeSlider_ValueChanged"/>
                                 </StackPanel>
 
@@ -134,7 +134,36 @@
 
             <!-- COLONNE DROITE : Mixage & Infos -->
             <Grid x:Name="InfoPanel" Grid.Column="1">
-                <Border Background="{ThemeResource LayerFillColorDefaultBrush}" 
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <Border x:Name="LufsWarningPanel"
+                        Grid.Row="0"
+                        Visibility="Collapsed"
+                        Background="Transparent"
+                        Padding="0,0,0,8"
+                        Margin="0,0,0,12">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="LufsWarningText"
+                                   TextWrapping="Wrap"
+                                   VerticalAlignment="Center"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <Button x:Name="LufsAutoAdjustButton"
+                                Grid.Column="1"
+                                Content="Ajuster"
+                                VerticalAlignment="Center"
+                                Click="LufsAutoAdjustButton_Click"/>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="1"
+                        Background="{ThemeResource LayerFillColorDefaultBrush}"
                         CornerRadius="12" Padding="24" 
                         BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" 
                         BorderThickness="1"
@@ -163,20 +192,20 @@
                                            TextAlignment="Right"
                                            TextWrapping="WrapWholeWords"/>
                             </Grid>
-                            <TextBlock Text="Pistes audio" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,0,0,12"/>
                             <StackPanel Margin="0,0,0,16">
                                 <Grid Margin="0,0,0,4">
                                     <TextBlock Text="Master" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                     <TextBlock x:Name="MasterVolumeText"
-                                               Text="30%"
+                                               Text="0.0 dB"
                                                HorizontalAlignment="Right"
                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                 </Grid>
                                 <Slider x:Name="MasterVolumeSlider"
-                                        Minimum="0"
-                                        Maximum="100"
-                                        Value="30"
-                                        ValueChanged="VolumeSlider_ValueChanged"/>
+                                        Minimum="-40"
+                                        Maximum="0"
+                                        Value="0"
+                                        StepFrequency="0.1"
+                                        ValueChanged="MasterVolumeSlider_ValueChanged"/>
                             </StackPanel>
                         </StackPanel>
                         

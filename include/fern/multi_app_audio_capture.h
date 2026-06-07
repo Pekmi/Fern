@@ -50,6 +50,7 @@ private:
     std::vector<std::unique_ptr<Source>> m_sources;
     bool m_isRunning;
     UINT64 m_masterStartRawQpc;
+    LONGLONG m_replayBufferDurationHns;
     LONGLONG m_lastRefreshHns;
     DWORD m_nextStreamIndex;
 };

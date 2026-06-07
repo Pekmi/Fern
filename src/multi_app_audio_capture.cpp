@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <utility>
 
 using Microsoft::WRL::ComPtr;
@@ -23,6 +24,16 @@ using Microsoft::WRL::ComPtr;
 namespace {
 
 constexpr LONGLONG kSourceRefreshIntervalHns = fern::HnsPerSecond;
+constexpr LONGLONG kEncoderTimestampRebaseToleranceHns = fern::HnsPerSecond / 20;
+constexpr int kMaxAudioSamplesPerPump = 64;
+
+struct AudioEncoderTimeline {
+    bool hasFirstInputTime = false;
+    LONGLONG firstInputTimeHns = 0;
+    bool hasOutputOffset = false;
+    LONGLONG outputOffsetHns = 0;
+    LONGLONG lastOutputTimeHns = -1;
+};
 
 struct AudioProcessCandidate {
     DWORD pid = 0;
@@ -139,13 +150,77 @@ std::vector<AudioProcessCandidate> EnumerateActiveAudioProcesses() {
     return candidates;
 }
 
-void DrainAudioEncoder(IMFTransform* encoder, RingBuffer& ringBuffer, DWORD streamIndex) {
+void NoteAcceptedAudioInput(IMFSample* sample, AudioEncoderTimeline& timeline) {
+    if (!sample || timeline.hasFirstInputTime) return;
+
+    LONGLONG inputTime = 0;
+    if (SUCCEEDED(sample->GetSampleTime(&inputTime))) {
+        timeline.firstInputTimeHns = inputTime;
+        timeline.hasFirstInputTime = true;
+    }
+}
+
+LONGLONG SaturatingAddHns(LONGLONG value, LONGLONG offset) {
+    if (offset > 0 && value > std::numeric_limits<LONGLONG>::max() - offset) {
+        return std::numeric_limits<LONGLONG>::max();
+    }
+    if (offset < 0 && value < std::numeric_limits<LONGLONG>::min() - offset) {
+        return std::numeric_limits<LONGLONG>::min();
+    }
+    return value + offset;
+}
+
+void OffsetDecodeTimestamp(IMFSample* sample, LONGLONG offset) {
+    if (!sample || offset <= 0) return;
+
+    UINT64 dts = 0;
+    if (FAILED(sample->GetUINT64(MFSampleExtension_DecodeTimestamp, &dts))) return;
+
+    const UINT64 unsignedOffset = static_cast<UINT64>(offset);
+    const UINT64 adjusted = dts > std::numeric_limits<UINT64>::max() - unsignedOffset
+        ? std::numeric_limits<UINT64>::max()
+        : dts + unsignedOffset;
+    sample->SetUINT64(MFSampleExtension_DecodeTimestamp, adjusted);
+}
+
+void AlignEncodedAudioTimestamp(IMFSample* sample, AudioEncoderTimeline& timeline) {
+    if (!sample) return;
+
+    LONGLONG outputTime = 0;
+    if (FAILED(sample->GetSampleTime(&outputTime))) return;
+
+    if (!timeline.hasOutputOffset) {
+        timeline.outputOffsetHns = 0;
+        if (timeline.hasFirstInputTime &&
+            timeline.firstInputTimeHns > kEncoderTimestampRebaseToleranceHns &&
+            outputTime + kEncoderTimestampRebaseToleranceHns < timeline.firstInputTimeHns) {
+            timeline.outputOffsetHns = timeline.firstInputTimeHns - outputTime;
+        }
+        timeline.hasOutputOffset = true;
+    }
+
+    if (timeline.outputOffsetHns != 0) {
+        outputTime = SaturatingAddHns(outputTime, timeline.outputOffsetHns);
+        sample->SetSampleTime(outputTime);
+        OffsetDecodeTimestamp(sample, timeline.outputOffsetHns);
+    }
+
+    if (timeline.lastOutputTimeHns >= 0 && outputTime <= timeline.lastOutputTimeHns) {
+        outputTime = timeline.lastOutputTimeHns + 1;
+        sample->SetSampleTime(outputTime);
+    }
+
+    timeline.lastOutputTimeHns = outputTime;
+}
+
+void DrainAudioEncoder(IMFTransform* encoder, RingBuffer& ringBuffer, DWORD streamIndex, AudioEncoderTimeline& timeline) {
     if (!encoder) return;
 
     for (;;) {
         ComPtr<IMFSample> output;
         HRESULT hr = PullSampleFromEncoder(encoder, output);
         if (hr != S_OK || !output) break;
+        AlignEncodedAudioTimestamp(output.Get(), timeline);
         ringBuffer.AddSample(output.Get(), streamIndex);
     }
 }
@@ -161,11 +236,13 @@ struct MultiAppAudioCapture::Source {
     std::unique_ptr<IsolatedAudioCapture> capture;
     ComPtr<IMFTransform> encoder;
     ComPtr<IMFMediaType> outputType;
+    AudioEncoderTimeline timeline;
 };
 
 MultiAppAudioCapture::MultiAppAudioCapture()
     : m_isRunning(false),
       m_masterStartRawQpc(0),
+      m_replayBufferDurationHns(0),
       m_lastRefreshHns(0),
       m_nextStreamIndex(1) {
 }
@@ -178,6 +255,7 @@ HRESULT MultiAppAudioCapture::Start(const Settings& settings) {
     if (m_isRunning) return S_FALSE;
 
     m_isRunning = true;
+    m_replayBufferDurationHns = std::max<LONGLONG>(0, static_cast<LONGLONG>(settings.bufferDuration)) * HnsPerSecond;
     m_lastRefreshHns = 0;
     AddMicrophoneSource(settings.microphoneDeviceId);
     RefreshSources();
@@ -209,7 +287,7 @@ void MultiAppAudioCapture::Pump(RingBuffer& ringBuffer) {
     for (auto& source : m_sources) {
         if (!source || !source->capture || !source->encoder) continue;
 
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < kMaxAudioSamplesPerPump; ++i) {
             ComPtr<IMFSample> input;
             HRESULT hr = source->capture->GetAudioSample(input);
             if (hr != S_OK || !input) break;
@@ -223,7 +301,8 @@ void MultiAppAudioCapture::Pump(RingBuffer& ringBuffer) {
                 break;
             }
 
-            DrainAudioEncoder(source->encoder.Get(), ringBuffer, source->streamIndex);
+            NoteAcceptedAudioInput(input.Get(), source->timeline);
+            DrainAudioEncoder(source->encoder.Get(), ringBuffer, source->streamIndex, source->timeline);
         }
     }
 }
@@ -315,7 +394,7 @@ HRESULT MultiAppAudioCapture::AddCaptureSource(std::unique_ptr<IsolatedAudioCapt
     if (m_masterStartRawQpc != 0) {
         const LONGLONG masterStartHns = RawQpcToHns(static_cast<LONGLONG>(m_masterStartRawQpc));
         const LONGLONG timelineOffsetHns = std::max<LONGLONG>(0, CurrentQpcHns() - masterStartHns);
-        capture->SetStartTime(m_masterStartRawQpc, timelineOffsetHns);
+        capture->SetStartTime(m_masterStartRawQpc, timelineOffsetHns, m_replayBufferDurationHns);
     }
 
     ComPtr<IMFTransform> encoder;

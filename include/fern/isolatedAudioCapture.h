@@ -35,7 +35,7 @@ public:
 
     // The caller passes raw QueryPerformanceCounter ticks. Internally the
     // master clock is stored in the same 100 ns unit used by WASAPI packets.
-    void SetStartTime(UINT64 rawQpc, LONGLONG timelineOffsetHns = 0);
+    void SetStartTime(UINT64 rawQpc, LONGLONG timelineOffsetHns = 0, LONGLONG retainedHistoryHns = 0);
 
     HRESULT GetAudioSample(ComPtr<IMFSample>& pSample);
     std::vector<fern::AudioActivityRange> GetActivityRanges();
@@ -76,6 +76,7 @@ private:
     std::atomic<UINT64> m_masterStartHns;
     UINT64 m_timelineFramesWritten;
     UINT64 m_framesSent;
+    UINT64 m_pendingLeadingSilenceFrames;
     bool m_hasAlignedFirstPacket;
     std::vector<fern::AudioActivityRange> m_activityRanges;
 };

@@ -22,7 +22,7 @@ namespace FernUI
             IReadOnlyList<AudioTrack> audioTracks,
             double targetSizeMb,
             TimeSpan duration,
-            double masterVolume,
+            double masterGain,
             IProgress<double>? progress)
         {
             if (!File.Exists(sourcePath))
@@ -49,7 +49,7 @@ namespace FernUI
                         outputFile.Path,
                         audioTracks,
                         videoBitrateKbps,
-                        masterVolume,
+                        masterGain,
                         duration,
                         progress);
                 }
@@ -79,7 +79,7 @@ namespace FernUI
             string outputPath,
             IReadOnlyList<AudioTrack> audioTracks,
             int? videoBitrateKbps,
-            double masterVolume,
+            double masterGain,
             TimeSpan duration,
             IProgress<double>? progress)
         {
@@ -93,7 +93,7 @@ namespace FernUI
                 RedirectStandardError = true
             };
 
-            foreach (string argument in BuildFfmpegArguments(sourcePath, outputPath, audioTracks, videoBitrateKbps, masterVolume))
+            foreach (string argument in BuildFfmpegArguments(sourcePath, outputPath, audioTracks, videoBitrateKbps, masterGain))
             {
                 process.StartInfo.ArgumentList.Add(argument);
             }
@@ -129,7 +129,7 @@ namespace FernUI
             string outputPath,
             IReadOnlyList<AudioTrack> audioTracks,
             int? videoBitrateKbps,
-            double masterVolume)
+            double masterGain)
         {
             yield return "-hide_banner";
             yield return "-y";
@@ -139,16 +139,16 @@ namespace FernUI
             yield return "-i";
             yield return sourcePath;
 
-            double clampedMasterVolume = Math.Clamp(masterVolume, 0.0, 1.0);
+            double clampedMasterGain = Math.Clamp(masterGain, 0.0, 1.0);
             List<AudioTrack> audibleTracks = audioTracks
-                .Where(track => clampedMasterVolume > 0 && track.AudioIndex >= 0 && track.Volume > 0)
+                .Where(track => clampedMasterGain > 0 && track.AudioIndex >= 0 && track.Volume > 0)
                 .OrderBy(track => track.AudioIndex)
                 .ToList();
 
             if (audibleTracks.Count > 0)
             {
                 yield return "-filter_complex";
-                yield return BuildAudioFilter(audibleTracks, clampedMasterVolume);
+                yield return BuildAudioFilter(audibleTracks, clampedMasterGain);
             }
 
             yield return "-map";
@@ -201,12 +201,12 @@ namespace FernUI
             yield return outputPath;
         }
 
-        private static string BuildAudioFilter(IReadOnlyList<AudioTrack> audioTracks, double masterVolume)
+        private static string BuildAudioFilter(IReadOnlyList<AudioTrack> audioTracks, double masterGain)
         {
             var filter = new StringBuilder();
             for (int i = 0; i < audioTracks.Count; i++)
             {
-                string volume = Math.Clamp((audioTracks[i].Volume / 100.0) * masterVolume, 0.0, 1.0)
+                string volume = Math.Clamp((audioTracks[i].Volume / 100.0) * masterGain, 0.0, 1.0)
                     .ToString("0.######", CultureInfo.InvariantCulture);
                 filter.Append(CultureInfo.InvariantCulture, $"[0:a:{audioTracks[i].AudioIndex}]volume={volume}[a{i}];");
             }

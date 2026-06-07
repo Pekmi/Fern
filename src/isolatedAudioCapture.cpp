@@ -80,6 +80,7 @@ IsolatedAudioCapture::IsolatedAudioCapture(DWORD targetPid)
       m_masterStartHns(0),
       m_timelineFramesWritten(0),
       m_framesSent(0),
+      m_pendingLeadingSilenceFrames(0),
       m_hasAlignedFirstPacket(false) {
     std::memset(&m_mixFormat, 0, sizeof(m_mixFormat));
 }
@@ -93,6 +94,7 @@ IsolatedAudioCapture::IsolatedAudioCapture(std::wstring captureDeviceId)
       m_masterStartHns(0),
       m_timelineFramesWritten(0),
       m_framesSent(0),
+      m_pendingLeadingSilenceFrames(0),
       m_hasAlignedFirstPacket(false) {
     std::memset(&m_mixFormat, 0, sizeof(m_mixFormat));
 }
@@ -102,13 +104,18 @@ IsolatedAudioCapture::~IsolatedAudioCapture() {
     if (m_activationFinishedEvent) CloseHandle(m_activationFinishedEvent);
 }
 
-void IsolatedAudioCapture::SetStartTime(UINT64 rawQpc, LONGLONG timelineOffsetHns) {
+void IsolatedAudioCapture::SetStartTime(UINT64 rawQpc, LONGLONG timelineOffsetHns, LONGLONG retainedHistoryHns) {
     std::lock_guard<std::mutex> lock(m_audioMutex);
     m_pcmBuffer.clear();
     m_activityRanges.clear();
-    const UINT64 offsetFrames = HnsToFrame(std::max<LONGLONG>(0, timelineOffsetHns));
-    m_timelineFramesWritten = offsetFrames;
-    m_framesSent = offsetFrames;
+    const LONGLONG offsetHns = std::max<LONGLONG>(0, timelineOffsetHns);
+    const LONGLONG retainedHns = std::max<LONGLONG>(0, retainedHistoryHns);
+    const LONGLONG leadingSilenceHns = std::min(offsetHns, retainedHns);
+    const UINT64 startFrame = HnsToFrame(offsetHns - leadingSilenceHns);
+    const UINT64 offsetFrame = std::max(startFrame, HnsToFrame(offsetHns));
+    m_timelineFramesWritten = offsetFrame;
+    m_framesSent = startFrame;
+    m_pendingLeadingSilenceFrames = offsetFrame - startFrame;
     m_hasAlignedFirstPacket = false;
     m_masterStartHns.store(static_cast<UINT64>(fern::RawQpcToHns(static_cast<LONGLONG>(rawQpc))), std::memory_order_release);
 }
@@ -128,6 +135,7 @@ HRESULT IsolatedAudioCapture::Start() {
         m_activityRanges.clear();
         m_timelineFramesWritten = 0;
         m_framesSent = 0;
+        m_pendingLeadingSilenceFrames = 0;
         m_hasAlignedFirstPacket = false;
         m_masterStartHns.store(0, std::memory_order_release);
     }
@@ -524,11 +532,24 @@ HRESULT IsolatedAudioCapture::GetAudioSample(ComPtr<IMFSample>& pSample) {
             AppendSilenceUntilFrameLocked(HnsToFrame(static_cast<LONGLONG>(nowHns - masterStartHns - kRealtimeSilenceLagHns)));
         }
 
-        const size_t samplesNeeded = static_cast<size_t>(kFramesPerSample) * channels;
-        if (m_pcmBuffer.size() < samplesNeeded) return S_FALSE;
+        const UINT64 leadingSilenceFrames = std::min<UINT64>(m_pendingLeadingSilenceFrames, kFramesPerSample);
+        const UINT32 bufferedFramesNeeded = kFramesPerSample - static_cast<UINT32>(leadingSilenceFrames);
+        const size_t bufferedSamplesNeeded = static_cast<size_t>(bufferedFramesNeeded) * channels;
+        if (m_pcmBuffer.size() < bufferedSamplesNeeded) return S_FALSE;
 
-        pcm.assign(m_pcmBuffer.begin(), m_pcmBuffer.begin() + samplesNeeded);
-        m_pcmBuffer.erase(m_pcmBuffer.begin(), m_pcmBuffer.begin() + samplesNeeded);
+        const size_t samplesNeeded = static_cast<size_t>(kFramesPerSample) * channels;
+        pcm.assign(samplesNeeded, 0);
+
+        if (bufferedSamplesNeeded > 0) {
+            const size_t outputSampleOffset = static_cast<size_t>(leadingSilenceFrames) * channels;
+            std::copy(
+                m_pcmBuffer.begin(),
+                m_pcmBuffer.begin() + bufferedSamplesNeeded,
+                pcm.begin() + outputSampleOffset);
+            m_pcmBuffer.erase(m_pcmBuffer.begin(), m_pcmBuffer.begin() + bufferedSamplesNeeded);
+        }
+
+        m_pendingLeadingSilenceFrames -= leadingSilenceFrames;
 
         hnsTime = FramesToHns(m_framesSent);
         hnsDuration = std::max<LONGLONG>(1, FramesToHns(m_framesSent + kFramesPerSample) - hnsTime);

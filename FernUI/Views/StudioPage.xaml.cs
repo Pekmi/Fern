@@ -15,6 +15,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading;
 using System.Threading.Tasks;
 using Windows.Foundation;
 using Windows.Foundation.Collections;
@@ -43,8 +44,11 @@ namespace FernUI.Views
         private Dictionary<int, AudioTrackManifestInfo> _audioTrackManifest = new();
         private readonly Dictionary<int, MediaPlayer> _audioPlayers = new();
         private readonly Dictionary<int, int> _audioPlayerTrackSelections = new();
-        private double _masterVolume = 0.3;
+        private double _masterDb = 0.0;
+        private double _studioVolume = 1.0;
+        private bool _isUpdatingStudioVolumeControls;
         private bool _isUpdatingMasterVolumeControls;
+        private bool _isNormalizingLufs;
         private bool _isMuted;
         private bool _isTearingDownStudioSession;
         private TypedEventHandler<MediaPlaybackItem, IVectorChangedEventArgs>? _playbackItemAudioTracksChangedHandler;
@@ -54,6 +58,9 @@ namespace FernUI.Views
         private ProgressBar? _exportProgressBar;
         private TextBlock? _exportStatusText;
         private StorageFile? _lastExportedFile;
+        private CancellationTokenSource? _lufsAnalysisCancellation;
+        private int _lufsAnalysisGeneration;
+        private StudioLufsAnalysis? _lastLufsAnalysis;
 
         private sealed class AudioTrackManifestInfo
         {
@@ -68,7 +75,7 @@ namespace FernUI.Views
         {
             this.InitializeComponent();
 
-            SetMasterVolumePercent(30, false);
+            SetMasterDb(0, false);
             AudioTracksListView.ItemsSource = AudioTracks;
             EnsureVideoPlayer();
 
@@ -206,7 +213,8 @@ namespace FernUI.Views
                 ClipTitleTextBlock.Text = _selectedClip.Title;
                 DurationText.Text = string.Join("   ", new[] { _selectedClip.Date, _selectedClip.Duration }
                     .Where(value => !string.IsNullOrWhiteSpace(value)));
-                SetMasterVolumePercent(30, false);
+                SetStudioVolumePercent(100, false);
+                SetMasterDb(0, false);
 
                 if (!string.IsNullOrEmpty(_selectedClip.FilePath))
                 {
@@ -294,6 +302,7 @@ namespace FernUI.Views
             
             CreateAudioPlayers();
             ApplyAllAudioVolumes();
+            StartLufsAnalysis();
             if (_videoPlayer?.PlaybackSession.PlaybackState == MediaPlaybackState.Playing)
             {
                 SynchronizeAudioPlayersToVideo(true);
@@ -381,6 +390,8 @@ namespace FernUI.Views
             _audioTrackManifest.Clear();
             DisposeAudioPlayers();
             DetachPlaybackItemHandlers();
+            CancelLufsAnalysis();
+            HideLufsWarning();
 
             DisposeVideoPlayer();
             _playbackItem = null;
@@ -605,7 +616,7 @@ namespace FernUI.Views
                     }
                 });
 
-                _lastExportedFile = await StudioExportService.ExportAsync(sourcePath, tracks, targetSizeMb, duration, _masterVolume, progress);
+                _lastExportedFile = await StudioExportService.ExportAsync(sourcePath, tracks, targetSizeMb, duration, CurrentMasterGain, progress);
                 ShowExportCompleteContent(_lastExportedFile);
             }
             catch (Exception ex)
@@ -1213,7 +1224,7 @@ namespace FernUI.Views
 
             double trackVolume = Math.Clamp(track.Volume / 100.0, 0.0, 1.0);
             player.IsMuted = _isMuted;
-            player.Volume = _isMuted ? 0 : Math.Clamp(_masterVolume * trackVolume, 0.0, 1.0);
+            player.Volume = _isMuted ? 0 : CalculateStudioPlayerVolume(trackVolume);
         }
 
         private void ApplyAllAudioVolumes()
@@ -1228,7 +1239,7 @@ namespace FernUI.Views
                 else
                 {
                     _videoPlayer.IsMuted = _isMuted;
-                    _videoPlayer.Volume = _isMuted ? 0 : _masterVolume;
+                    _videoPlayer.Volume = _isMuted ? 0 : CalculateStudioPlayerVolume(1.0);
                 }
             }
 
@@ -1332,33 +1343,50 @@ namespace FernUI.Views
 
         private void VolumeSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
         {
-            if (_isUpdatingMasterVolumeControls) return;
+            if (_isUpdatingStudioVolumeControls) return;
 
-            SetMasterVolumePercent(e.NewValue);
+            SetStudioVolumePercent(e.NewValue);
         }
 
-        private void SetMasterVolumePercent(double percent, bool applyVolumes = true)
+        private void SetStudioVolumePercent(double percent, bool applyVolumes = true)
         {
             percent = Math.Clamp(percent, 0.0, 100.0);
-            _masterVolume = percent / 100.0;
+            _studioVolume = percent / 100.0;
 
-            _isUpdatingMasterVolumeControls = true;
+            _isUpdatingStudioVolumeControls = true;
             try
             {
                 if (VolumeSlider != null && Math.Abs(VolumeSlider.Value - percent) > 0.01)
                 {
                     VolumeSlider.Value = percent;
                 }
+            }
+            finally
+            {
+                _isUpdatingStudioVolumeControls = false;
+            }
 
-                if (MasterVolumeSlider != null && Math.Abs(MasterVolumeSlider.Value - percent) > 0.01)
-                {
-                    MasterVolumeSlider.Value = percent;
-                }
+            if (applyVolumes)
+            {
+                ApplyAllAudioVolumes();
+            }
+        }
 
-                if (MasterVolumeText != null)
-                {
-                    MasterVolumeText.Text = $"{percent:0}%";
-                }
+        private void MasterVolumeSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+        {
+            if (_isUpdatingMasterVolumeControls) return;
+
+            SetMasterDb(e.NewValue);
+        }
+
+        private void SetMasterDb(double db, bool applyVolumes = true)
+        {
+            _masterDb = ClampMasterDb(db);
+
+            _isUpdatingMasterVolumeControls = true;
+            try
+            {
+                SyncMasterDbControls();
             }
             finally
             {
@@ -1369,6 +1397,203 @@ namespace FernUI.Views
             {
                 ApplyAllAudioVolumes();
             }
+        }
+
+        private double CurrentMasterGain => DbToGain(_masterDb);
+
+        private void UpdateMasterDbText()
+        {
+            if (MasterVolumeText == null) return;
+
+            MasterVolumeText.Text = $"{_masterDb:0.0} dB";
+        }
+
+        private void SyncMasterDbControls()
+        {
+            if (MasterVolumeSlider != null && Math.Abs(MasterVolumeSlider.Value - _masterDb) > 0.01)
+            {
+                MasterVolumeSlider.Value = _masterDb;
+            }
+
+            UpdateMasterDbText();
+        }
+
+        private double CalculateStudioPlayerVolume(double trackVolume)
+        {
+            double volume = _studioVolume * CurrentMasterGain * Math.Clamp(trackVolume, 0.0, 1.0);
+            return Math.Clamp(volume, 0.0, 1.0);
+        }
+
+        private static double DbToGain(double db)
+        {
+            return Math.Pow(10.0, ClampMasterDb(db) / 20.0);
+        }
+
+        private static double ClampMasterDb(double db)
+        {
+            return Math.Clamp(db, -40.0, 0.0);
+        }
+
+        private void StartLufsAnalysis()
+        {
+            CancelLufsAnalysis();
+            HideLufsWarning();
+
+            if (_selectedClip == null || string.IsNullOrWhiteSpace(_selectedClip.FilePath) || !File.Exists(_selectedClip.FilePath))
+            {
+                return;
+            }
+
+            var tracks = AudioTracks.ToList();
+            if (tracks.Count == 0) return;
+
+            var cancellation = new CancellationTokenSource();
+            int generation = ++_lufsAnalysisGeneration;
+            double masterGain = 1.0;
+            _lufsAnalysisCancellation = cancellation;
+            _lastLufsAnalysis = null;
+
+            _ = AnalyzeLufsForCurrentClipAsync(_selectedClip.FilePath, tracks, masterGain, generation, cancellation);
+        }
+
+        private async Task AnalyzeLufsForCurrentClipAsync(
+            string sourcePath,
+            IReadOnlyList<FernUI.Models.AudioTrack> tracks,
+            double masterGain,
+            int generation,
+            CancellationTokenSource cancellation)
+        {
+            try
+            {
+                StudioLufsAnalysis? analysis = await StudioLufsService.AnalyzeAsync(
+                    sourcePath,
+                    tracks,
+                    masterGain,
+                    cancellation.Token);
+
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (_isTearingDownStudioSession || generation != _lufsAnalysisGeneration)
+                    {
+                        return;
+                    }
+
+                    _lastLufsAnalysis = analysis;
+
+                    if (analysis == null)
+                    {
+                        HideLufsWarning();
+                        return;
+                    }
+
+                    ShowLufsWarningIfNeeded(analysis);
+                });
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when the user changes clip or leaves the Studio.
+            }
+            finally
+            {
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (_lufsAnalysisCancellation == cancellation)
+                    {
+                        _lufsAnalysisCancellation = null;
+                    }
+                });
+
+                cancellation.Dispose();
+            }
+        }
+
+        private void CancelLufsAnalysis()
+        {
+            _lufsAnalysisGeneration++;
+            _lufsAnalysisCancellation?.Cancel();
+            _lufsAnalysisCancellation = null;
+            _lastLufsAnalysis = null;
+        }
+
+        private void ShowLufsWarningIfNeeded(StudioLufsAnalysis analysis)
+        {
+            if (analysis.AbsoluteErrorLu <= StudioLufsService.ToleranceLu)
+            {
+                HideLufsWarning();
+                return;
+            }
+
+            LufsWarningText.Text = $"LUFS {analysis.IntegratedLufs:0.#}, cible {analysis.TargetLufs:0.#}.";
+            LufsWarningPanel.Visibility = Visibility.Visible;
+        }
+
+        private void HideLufsWarning()
+        {
+            if (LufsWarningPanel != null)
+            {
+                LufsWarningPanel.Visibility = Visibility.Collapsed;
+            }
+        }
+
+        private async void LufsAutoAdjustButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_selectedClip == null ||
+                string.IsNullOrWhiteSpace(_selectedClip.FilePath) ||
+                _lastLufsAnalysis == null ||
+                _isNormalizingLufs)
+            {
+                return;
+            }
+
+            string sourcePath = _selectedClip.FilePath;
+            var tracks = AudioTracks.ToList();
+            StudioLufsAnalysis analysis = _lastLufsAnalysis;
+            _isNormalizingLufs = true;
+            LufsAutoAdjustButton.IsEnabled = false;
+            LufsAutoAdjustButton.Content = "Ajustement...";
+            LufsWarningText.Text = "Correction LUFS...";
+
+            try
+            {
+                ReleaseMediaForSourceRewrite();
+                await StudioLufsService.NormalizeClipAudioAsync(sourcePath, tracks, analysis, CancellationToken.None);
+                SetMasterDb(0, false);
+                InitializeMedia(sourcePath);
+                HideLufsWarning();
+            }
+            catch (Exception ex)
+            {
+                if (File.Exists(sourcePath))
+                {
+                    InitializeMedia(sourcePath);
+                }
+
+                LufsWarningText.Text = $"Correction impossible: {ex.Message}";
+                LufsWarningPanel.Visibility = Visibility.Visible;
+            }
+            finally
+            {
+                _isNormalizingLufs = false;
+                LufsAutoAdjustButton.IsEnabled = true;
+                LufsAutoAdjustButton.Content = "Ajuster";
+            }
+        }
+
+        private void ReleaseMediaForSourceRewrite()
+        {
+            CancelLufsAnalysis();
+            PauseAudioPlayers();
+            DisposeAudioPlayers();
+            DetachPlaybackItemHandlers();
+            _timer.Stop();
+
+            if (_videoPlayer != null)
+            {
+                _videoPlayer.Pause();
+                _videoPlayer.Source = null;
+            }
+
+            _playbackItem = null;
         }
 
         private void FullscreenButton_Click(object sender, RoutedEventArgs e)
