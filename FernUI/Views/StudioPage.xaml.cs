@@ -56,7 +56,9 @@ namespace FernUI.Views
         private Slider? _exportSizeSlider;
         private TextBlock? _exportSizeText;
         private ProgressBar? _exportProgressBar;
+        private ProgressBar? _uploadProgressBar;
         private TextBlock? _exportStatusText;
+        private TextBlock? _uploadStatusText;
         private StorageFile? _lastExportedFile;
         private CancellationTokenSource? _lufsAnalysisCancellation;
         private int _lufsAnalysisGeneration;
@@ -462,10 +464,30 @@ namespace FernUI.Views
 
                 StorageFile exportedFile = await StudioExportService.ExportAsync(_selectedClip.FilePath, tracks, targetSizeMb, duration, CurrentMasterGain, progress);
                 
-                if (_exportStatusText != null) _exportStatusText.Text = "Envoi vers le Cloud...";
-                if (_exportProgressBar != null) _exportProgressBar.IsIndeterminate = true;
+                if (_exportStatusText != null) _exportStatusText.Text = "Export terminé";
+                if (_exportProgressBar != null) _exportProgressBar.Value = 100;
+                if (_uploadStatusText != null) _uploadStatusText.Text = "Upload... 0%";
+                if (_uploadProgressBar != null)
+                {
+                    _uploadProgressBar.IsIndeterminate = false;
+                    _uploadProgressBar.Value = 0;
+                }
 
-                string link = await CloudService.UploadClipAsync(exportedFile.Path);
+                var uploadProgress = new Progress<double>(value =>
+                {
+                    double clamped = Math.Clamp(value, 0, 100);
+                    if (_uploadProgressBar != null)
+                    {
+                        _uploadProgressBar.IsIndeterminate = false;
+                        _uploadProgressBar.Value = clamped;
+                    }
+                    if (_uploadStatusText != null)
+                    {
+                        _uploadStatusText.Text = $"Upload... {clamped:0}%";
+                    }
+                });
+
+                string link = await CloudService.UploadClipAsync(exportedFile.Path, _selectedClip.Title, uploadProgress);
                 
                 var package = new DataPackage();
                 package.SetText(link);
@@ -505,6 +527,18 @@ namespace FernUI.Views
                         Minimum = 0,
                         Maximum = 100,
                         IsIndeterminate = true
+                    }),
+                    (_uploadStatusText = new TextBlock
+                    {
+                        Text = "Upload en attente",
+                        Opacity = 0.72
+                    }),
+                    (_uploadProgressBar = new ProgressBar
+                    {
+                        Minimum = 0,
+                        Maximum = 100,
+                        Value = 0,
+                        IsIndeterminate = false
                     })
                 }
             };
@@ -532,9 +566,9 @@ namespace FernUI.Views
                 },
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 Background = new SolidColorBrush(Windows.UI.Color.FromArgb(12, 255, 255, 255)),
-                Padding = new Thickness(12),
-                ToolTipService = { ToolTip = "Cliquer pour copier" }
+                Padding = new Thickness(12)
             };
+            ToolTipService.SetToolTip(linkButton, "Cliquer pour copier");
 
             linkButton.Click += (_, _) =>
             {
@@ -648,7 +682,9 @@ namespace FernUI.Views
             _exportSizeSlider = null;
             _exportSizeText = null;
             _exportProgressBar = null;
+            _uploadProgressBar = null;
             _exportStatusText = null;
+            _uploadStatusText = null;
         }
 
         private UIElement CreateExportSizePickerContent(double minimumMb, double maximumMb)
