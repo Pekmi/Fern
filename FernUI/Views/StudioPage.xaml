@@ -238,7 +238,7 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="*"/>
                                 </Grid.ColumnDefinitions>
-                                <Button Content="Partager" HorizontalAlignment="Stretch" Padding="0,12"/>
+                                <Button Content="Partager" Click="ShareButton_Click" HorizontalAlignment="Stretch" Padding="0,12"/>
                                 <Button x:Name="ExportButton"
                                         Grid.Column="1"
                                         Content="Exporter"

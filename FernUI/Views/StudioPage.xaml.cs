@@ -410,10 +410,156 @@ namespace FernUI.Views
             TogglePlayback();
         }
 
-        private void SaveButton_Click(object sender, RoutedEventArgs e)
+        private async void SaveButton_Click(object sender, RoutedEventArgs e)
         {
             bool saved = SaveCurrentAudioMix();
             ShowSaveFeedback(saved);
+        }
+
+        private async void ShareButton_Click(object sender, RoutedEventArgs e)
+        {
+            await ShareClipAsync();
+        }
+
+        private async Task ShareClipAsync()
+        {
+            if (_selectedClip == null || string.IsNullOrWhiteSpace(_selectedClip.FilePath) || !File.Exists(_selectedClip.FilePath))
+            {
+                return;
+            }
+
+            _exportDialog = new ContentDialog
+            {
+                XamlRoot = XamlRoot,
+                CloseButtonText = string.Empty,
+                DefaultButton = ContentDialogButton.None
+            };
+
+            ShowShareProgressContent();
+            var dialogTask = _exportDialog.ShowAsync();
+
+            try
+            {
+                long sourceBytes = new FileInfo(_selectedClip.FilePath).Length;
+                double targetSizeMb = Math.Max(0.1, sourceBytes / 1024.0 / 1024.0);
+                IReadOnlyList<FernUI.Models.AudioTrack> tracks = AudioTracks.ToList();
+                TimeSpan duration = _selectedClip.DurationValue > TimeSpan.Zero
+                    ? _selectedClip.DurationValue
+                    : _videoPlayer?.PlaybackSession.NaturalDuration ?? TimeSpan.Zero;
+                
+                SaveCurrentAudioMix();
+
+                var progress = new Progress<double>(value =>
+                {
+                    if (_exportProgressBar == null) return;
+                    _exportProgressBar.IsIndeterminate = false;
+                    _exportProgressBar.Value = Math.Clamp(value, 0, 100);
+                    if (_exportStatusText != null)
+                    {
+                        _exportStatusText.Text = $"Export... {Math.Clamp(value, 0, 100):0}%";
+                    }
+                });
+
+                StorageFile exportedFile = await StudioExportService.ExportAsync(_selectedClip.FilePath, tracks, targetSizeMb, duration, CurrentMasterGain, progress);
+                
+                if (_exportStatusText != null) _exportStatusText.Text = "Envoi vers le Cloud...";
+                if (_exportProgressBar != null) _exportProgressBar.IsIndeterminate = true;
+
+                string link = await CloudService.UploadClipAsync(exportedFile.Path);
+                
+                var package = new DataPackage();
+                package.SetText(link);
+                Clipboard.SetContent(package);
+
+                ShowShareCompleteContent(link);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Cloud Upload failed: {ex}");
+                ShowExportErrorContent(ex.Message);
+            }
+        }
+
+        private void ShowShareProgressContent()
+        {
+            if (_exportDialog == null) return;
+
+            _exportDialog.CloseButtonText = string.Empty;
+            _exportDialog.Content = new StackPanel
+            {
+                Spacing = 16,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "Partage en cours",
+                        FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+                    },
+                    (_exportStatusText = new TextBlock
+                    {
+                        Text = "Pr\u00e9paration...",
+                        Opacity = 0.72
+                    }),
+                    (_exportProgressBar = new ProgressBar
+                    {
+                        Minimum = 0,
+                        Maximum = 100,
+                        IsIndeterminate = true
+                    })
+                }
+            };
+        }
+
+        private void ShowShareCompleteContent(string link)
+        {
+            if (_exportDialog == null) return;
+
+            _exportDialog.CloseButtonText = string.Empty;
+            var root = new StackPanel { Spacing = 16 };
+            root.Children.Add(new TextBlock
+            {
+                Text = "Partage r\u00e9ussi",
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold
+            });
+
+            var linkButton = new Button
+            {
+                Content = new TextBlock
+                {
+                    Text = link,
+                    TextWrapping = TextWrapping.Wrap,
+                    Foreground = (Brush)Application.Current.Resources["AccentTextFillColorPrimaryBrush"]
+                },
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(12, 255, 255, 255)),
+                Padding = new Thickness(12),
+                ToolTipService = { ToolTip = "Cliquer pour copier" }
+            };
+
+            linkButton.Click += (_, _) =>
+            {
+                var package = new DataPackage();
+                package.SetText(link);
+                Clipboard.SetContent(package);
+                
+                // Petit feedback visuel au clic
+                linkButton.Content = new TextBlock { Text = "Lien copi\u00e9 !", Foreground = linkButton.Foreground };
+                _ = Task.Delay(1500).ContinueWith(t => DispatcherQueue.TryEnqueue(() => linkButton.Content = new TextBlock { Text = link, Foreground = linkButton.Foreground, TextWrapping = TextWrapping.Wrap }));
+            };
+
+            root.Children.Add(linkButton);
+
+            var doneButton = new Button
+            {
+                Content = "Termin\u00e9",
+                Style = SaveButton.Style,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Padding = new Thickness(0, 12, 0, 12)
+            };
+            doneButton.Click += (_, _) => _exportDialog?.Hide();
+            root.Children.Add(doneButton);
+
+            _exportDialog.Content = root;
         }
 
         private bool SaveCurrentAudioMix()

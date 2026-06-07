@@ -27,6 +27,8 @@ namespace FernUI.Models
         public bool LowLatency { get; set; } = false;
         public int QualityVsSpeed { get; set; } = 70;
         public int EncoderIndex { get; set; } = 0;
+        public string CloudUrl { get; set; } = "";
+        public string CloudApiKey { get; set; } = "";
 
         private readonly string _filePath;
 
@@ -84,6 +86,8 @@ namespace FernUI.Models
                 bool sawLowLatency = false;
                 bool sawQualityVsSpeed = false;
                 bool sawEncoderIndex = false;
+                bool sawCloudUrl = false;
+                bool sawCloudApiKey = false;
                 string loadedStoragePath = StoragePath;
 
                 foreach (var line in File.ReadAllLines(_filePath))
@@ -157,6 +161,14 @@ namespace FernUI.Models
                             if (int.TryParse(value, out int encoderIndex)) EncoderIndex = encoderIndex;
                             sawEncoderIndex = true;
                             break;
+                        case "CloudUrl":
+                            CloudUrl = value;
+                            sawCloudUrl = true;
+                            break;
+                        case "CloudApiKey":
+                            CloudApiKey = value;
+                            sawCloudApiKey = true;
+                            break;
                     }
                 }
 
@@ -167,6 +179,7 @@ namespace FernUI.Models
                 if (!sawHotkey || !sawMicrophoneDeviceId || !sawMicrophoneDeviceName ||
                     !sawVideoCodec || !sawEncoderProfile || !sawRateControl || !sawMaxBitrateMultiplier ||
                     !sawGopSeconds || !sawBFrames || !sawLowLatency || !sawQualityVsSpeed || !sawEncoderIndex ||
+                    !sawCloudUrl || !sawCloudApiKey ||
                     !string.Equals(loadedStoragePath, StoragePath, StringComparison.OrdinalIgnoreCase))
                 {
                     Save();
@@ -205,7 +218,9 @@ namespace FernUI.Models
                     $"BFrames={BFrames}",
                     $"LowLatency={LowLatency.ToString().ToLowerInvariant()}",
                     $"QualityVsSpeed={QualityVsSpeed}",
-                    $"EncoderIndex={EncoderIndex}"
+                    $"EncoderIndex={EncoderIndex}",
+                    $"CloudUrl={CloudUrl}",
+                    $"CloudApiKey={CloudApiKey}"
                 };
                 File.WriteAllLines(_filePath, lines);
             }

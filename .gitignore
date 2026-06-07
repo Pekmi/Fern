@@ -82,3 +82,6 @@ obj/
 *.userosscache
 .vs/
 properties/
+FernCloudServer/node_modules/
+FernCloudServer/.env
+FernCloudServer/uploads/
