@@ -2,10 +2,30 @@
 
 #include "../include/fern/ipc_server.h"
 
+#include <algorithm>
+#include <cctype>
+#include <string>
+
 
 std::atomic<bool> running(true);
 std::atomic<bool> triggerSave(false);
 
+namespace {
+
+std::string NormalizeCommand(const char* value) {
+    std::string command = value ? value : "";
+    command.erase(std::remove_if(command.begin(), command.end(), [](unsigned char c) {
+        return std::isspace(c) != 0;
+    }), command.end());
+
+    std::transform(command.begin(), command.end(), command.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+
+    return command;
+}
+
+}
 
 void RunIpcServer(std::atomic<bool>& running, std::atomic<bool>& triggerSave) {
     while (running) {
@@ -28,8 +48,11 @@ void RunIpcServer(std::atomic<bool>& running, std::atomic<bool>& triggerSave) {
             
             if (ReadFile(hPipe, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
                 buffer[bytesRead] = '\0';
-                if (strcmp(buffer, "SAVE") == 0) {
+                const std::string command = NormalizeCommand(buffer);
+                if (command == "SAVE") {
                     triggerSave = true; //lance save
+                } else if (command == "STOP") {
+                    running = false;
                 }
             }
         }

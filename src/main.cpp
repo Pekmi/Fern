@@ -49,13 +49,28 @@ bool IsRedirectedStdHandle(DWORD handleId) {
     return type == FILE_TYPE_PIPE || type == FILE_TYPE_DISK;
 }
 
+bool ShouldForceConsoleOutput() {
+    wchar_t value[16] = {};
+    if (GetEnvironmentVariableW(L"FERN_DAEMON_CONSOLE", value, static_cast<DWORD>(std::size(value))) == 0) {
+        return false;
+    }
+
+    const std::wstring normalized = ToLower(value);
+    return normalized == L"1" || normalized == L"true" || normalized == L"yes" || normalized == L"on";
+}
+
 void InitializeConsoleOutput() {
     if (IsRedirectedStdHandle(STD_OUTPUT_HANDLE) || IsRedirectedStdHandle(STD_ERROR_HANDLE)) {
         return;
     }
 
-    if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
-        AllocConsole();
+    bool hasConsole = AttachConsole(ATTACH_PARENT_PROCESS) != FALSE;
+    if (!hasConsole && ShouldForceConsoleOutput()) {
+        hasConsole = AllocConsole() != FALSE;
+    }
+
+    if (!hasConsole) {
+        return;
     }
 
     FILE* fpOUT = nullptr;

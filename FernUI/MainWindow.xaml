@@ -133,6 +133,7 @@
                 <NavigationViewItem x:Name="DaemonStatusItem"
                                     Content="Daemon inactif"
                                     Tag="DaemonStatus"
+                                    Tapped="DaemonStatusItem_Tapped"
                                     SelectsOnInvoked="False"
                                     ToolTipService.ToolTip="Daemon inactif">
                     <NavigationViewItem.Icon>
