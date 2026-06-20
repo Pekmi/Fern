@@ -16,10 +16,12 @@
 #include <cstring>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <utility>
 
 #include "../include/fern/clock.h"
 #include "../include/fern/isolatedAudioCapture.h"
+#include "../include/fern/logger.h"
 
 using namespace Microsoft::WRL;
 
@@ -50,6 +52,24 @@ short Int24ToPcm16(const BYTE* src) {
     int value = src[0] | (src[1] << 8) | (src[2] << 16);
     if (value & 0x00800000) value |= ~0x00FFFFFF;
     return static_cast<short>(value >> 8);
+}
+
+std::wstring CaptureLabel(DWORD targetPid, bool useInputDevice) {
+    if (targetPid != 0) return L"process pid=" + std::to_wstring(targetPid);
+    return useInputDevice ? L"microphone" : L"default render endpoint";
+}
+
+std::wstring WaveFormatText(const WAVEFORMATEX* format) {
+    if (!format) return L"<null format>";
+
+    std::wostringstream stream;
+    stream << L"tag=0x" << std::hex << format->wFormatTag << std::dec
+           << L" channels=" << format->nChannels
+           << L" sampleRate=" << format->nSamplesPerSec
+           << L" bits=" << format->wBitsPerSample
+           << L" blockAlign=" << format->nBlockAlign
+           << L" avgBytesPerSec=" << format->nAvgBytesPerSec;
+    return stream.str();
 }
 }
 
@@ -123,6 +143,9 @@ void IsolatedAudioCapture::SetStartTime(UINT64 rawQpc, LONGLONG timelineOffsetHn
 HRESULT IsolatedAudioCapture::Start() {
     if (m_isCapturing) return S_FALSE;
 
+    const std::wstring label = CaptureLabel(m_targetPid, m_useInputDevice);
+    fern::LogInfo(L"WASAPI", L"Starting capture for " + label);
+
     if (m_activationFinishedEvent) {
         CloseHandle(m_activationFinishedEvent);
         m_activationFinishedEvent = NULL;
@@ -160,12 +183,21 @@ HRESULT IsolatedAudioCapture::Start() {
             &prop,
             handler.Get(),
             &asyncOp);
-        if (FAILED(hr)) return hr;
-        WaitForSingleObject(m_activationFinishedEvent, 2000);
+        if (FAILED(hr)) {
+            fern::LogHResult(fern::LogLevel::Warning, L"WASAPI", L"ActivateAudioInterfaceAsync failed for " + label, hr);
+            return hr;
+        }
+        const DWORD waitResult = WaitForSingleObject(m_activationFinishedEvent, 2000);
+        if (waitResult != WAIT_OBJECT_0) {
+            fern::LogWarning(L"WASAPI", L"Activation timed out for " + label);
+        }
     } else {
         ComPtr<IMMDeviceEnumerator> pEnum;
         hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_ALL, IID_PPV_ARGS(&pEnum));
-        if (FAILED(hr)) return hr;
+        if (FAILED(hr)) {
+            fern::LogHResult(fern::LogLevel::Warning, L"WASAPI", L"MMDeviceEnumerator creation failed for " + label, hr);
+            return hr;
+        }
 
         ComPtr<IMMDevice> pDev;
         if (m_useInputDevice) {
@@ -174,24 +206,41 @@ HRESULT IsolatedAudioCapture::Start() {
                 if (FAILED(hr) || !pDev) {
                     std::wcerr << L"AUDIO: microphone device unavailable, falling back to default capture endpoint. 0x"
                                << std::hex << hr << std::dec << std::endl;
+                    fern::LogHResult(
+                        fern::LogLevel::Warning,
+                        L"WASAPI",
+                        L"Configured microphone unavailable; falling back to default endpoint.",
+                        hr);
                     pDev.Reset();
                 }
             }
 
             if (!pDev) {
                 hr = pEnum->GetDefaultAudioEndpoint(eCapture, eConsole, &pDev);
-                if (FAILED(hr)) return hr;
+                if (FAILED(hr)) {
+                    fern::LogHResult(fern::LogLevel::Warning, L"WASAPI", L"Default capture endpoint unavailable.", hr);
+                    return hr;
+                }
             }
         } else {
             hr = pEnum->GetDefaultAudioEndpoint(eRender, eConsole, &pDev);
-            if (FAILED(hr)) return hr;
+            if (FAILED(hr)) {
+                fern::LogHResult(fern::LogLevel::Warning, L"WASAPI", L"Default render endpoint unavailable.", hr);
+                return hr;
+            }
         }
 
         hr = pDev->Activate(__uuidof(IAudioClient), CLSCTX_ALL, NULL, reinterpret_cast<void**>(m_audioClient.GetAddressOf()));
-        if (FAILED(hr)) return hr;
+        if (FAILED(hr)) {
+            fern::LogHResult(fern::LogLevel::Warning, L"WASAPI", L"IAudioClient activation failed for " + label, hr);
+            return hr;
+        }
     }
 
-    if (!m_audioClient) return E_FAIL;
+    if (!m_audioClient) {
+        fern::LogError(L"WASAPI", L"IAudioClient missing after activation for " + label);
+        return E_FAIL;
+    }
 
     const bool isProcessLoopback = m_targetPid != 0;
     const bool isInputCapture = m_useInputDevice && !isProcessLoopback;
@@ -200,7 +249,10 @@ HRESULT IsolatedAudioCapture::Start() {
     } else {
         WAVEFORMATEX* pwfx = nullptr;
         hr = m_audioClient->GetMixFormat(&pwfx);
-        if (FAILED(hr) || !pwfx) return FAILED(hr) ? hr : E_FAIL;
+        if (FAILED(hr) || !pwfx) {
+            fern::LogHResult(fern::LogLevel::Warning, L"WASAPI", L"GetMixFormat failed for " + label, hr);
+            return FAILED(hr) ? hr : E_FAIL;
+        }
 
         if (pwfx->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
             std::memset(&m_mixFormat, 0, sizeof(WAVEFORMATEXTENSIBLE));
@@ -212,6 +264,10 @@ HRESULT IsolatedAudioCapture::Start() {
         CoTaskMemFree(pwfx);
     }
 
+    fern::LogInfo(
+        L"WASAPI",
+        L"Mix format for " + label + L": " + WaveFormatText(reinterpret_cast<WAVEFORMATEX*>(&m_mixFormat)));
+
     hr = m_audioClient->Initialize(
         AUDCLNT_SHAREMODE_SHARED,
         isInputCapture ? 0 : AUDCLNT_STREAMFLAGS_LOOPBACK,
@@ -220,6 +276,7 @@ HRESULT IsolatedAudioCapture::Start() {
         reinterpret_cast<WAVEFORMATEX*>(&m_mixFormat),
         NULL);
     if (FAILED(hr) && isProcessLoopback) {
+        fern::LogHResult(fern::LogLevel::Warning, L"WASAPI", L"Process loopback initialize failed at 48000 Hz; retrying 44100 Hz.", hr);
         SetPcm16StereoFormat(m_mixFormat, 44100);
         hr = m_audioClient->Initialize(
             AUDCLNT_SHAREMODE_SHARED,
@@ -229,21 +286,34 @@ HRESULT IsolatedAudioCapture::Start() {
             reinterpret_cast<WAVEFORMATEX*>(&m_mixFormat),
             NULL);
     }
-    if (FAILED(hr)) return hr;
+    if (FAILED(hr)) {
+        fern::LogHResult(fern::LogLevel::Warning, L"WASAPI", L"IAudioClient Initialize failed for " + label, hr);
+        return hr;
+    }
 
     hr = m_audioClient->GetService(IID_PPV_ARGS(&m_captureClient));
-    if (FAILED(hr)) return hr;
+    if (FAILED(hr)) {
+        fern::LogHResult(fern::LogLevel::Warning, L"WASAPI", L"IAudioCaptureClient service unavailable for " + label, hr);
+        return hr;
+    }
 
     hr = m_audioClient->Start();
-    if (FAILED(hr)) return hr;
+    if (FAILED(hr)) {
+        fern::LogHResult(fern::LogLevel::Warning, L"WASAPI", L"IAudioClient Start failed for " + label, hr);
+        return hr;
+    }
 
     m_isCapturing = true;
     m_captureThread = std::thread(&IsolatedAudioCapture::CaptureLoop, this);
+    fern::LogInfo(L"WASAPI", L"Capture started for " + label);
     return S_OK;
 }
 
 void IsolatedAudioCapture::Stop() {
-    m_isCapturing = false;
+    const bool wasCapturing = m_isCapturing.exchange(false);
+    if (wasCapturing) {
+        fern::LogInfo(L"WASAPI", L"Stopping capture for " + CaptureLabel(m_targetPid, m_useInputDevice));
+    }
     if (m_captureThread.joinable()) m_captureThread.join();
     if (m_audioClient) m_audioClient->Stop();
 }

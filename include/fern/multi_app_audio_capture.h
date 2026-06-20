@@ -52,6 +52,7 @@ private:
     UINT64 m_masterStartRawQpc;
     LONGLONG m_replayBufferDurationHns;
     LONGLONG m_lastRefreshHns;
+    std::wstring m_lastCandidateSignature;
     DWORD m_nextStreamIndex;
 };
 

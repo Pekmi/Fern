@@ -10,10 +10,13 @@
 #include <codecapi.h>
 #include <mferror.h>
 #include <algorithm>
+#include <cstring>
 #include <cwctype>
+#include <sstream>
 #include <string>
 
 #include "../include/fern/encoder.h"
+#include "../include/fern/logger.h"
 
 namespace {
 std::wstring ToLower(std::wstring value) {
@@ -30,6 +33,37 @@ bool IsHevcCodec(const VideoEncoderSettings& settings) {
 
 GUID VideoSubtype(const VideoEncoderSettings& settings) {
     return IsHevcCodec(settings) ? MFVideoFormat_HEVC : MFVideoFormat_H264;
+}
+
+std::wstring ActivateName(IMFActivate* activate) {
+    if (!activate) return L"<null>";
+
+    wchar_t* value = nullptr;
+    UINT32 length = 0;
+    if (SUCCEEDED(activate->GetAllocatedString(MFT_FRIENDLY_NAME_Attribute, &value, &length)) && value) {
+        std::wstring result(value, length);
+        CoTaskMemFree(value);
+        return result;
+    }
+
+    return L"<unnamed>";
+}
+
+std::wstring VideoSettingsText(const VideoEncoderSettings& settings, UINT width, UINT height) {
+    std::wostringstream stream;
+    stream << L"codec=" << settings.codec
+           << L" size=" << width << L"x" << height
+           << L" fps=" << settings.fps
+           << L" bitrateMbps=" << settings.bitrateMbps
+           << L" profile=" << settings.profile
+           << L" rateControl=" << settings.rateControl
+           << L" maxBitrateMultiplier=" << settings.maxBitrateMultiplier
+           << L" gopSeconds=" << settings.gopSeconds
+           << L" bFrames=" << settings.bFrames
+           << L" lowLatency=" << (settings.lowLatency ? L"true" : L"false")
+           << L" qualityVsSpeed=" << settings.qualityVsSpeed
+           << L" encoderIndex=" << settings.encoderIndex;
+    return stream.str();
 }
 
 UINT32 VideoProfile(const VideoEncoderSettings& settings) {
@@ -58,6 +92,7 @@ void SetCodecApiUInt32(ICodecAPI* codecApi, const GUID& property, UINT32 value, 
     if (FAILED(hr)) {
         std::cerr << "VIDEO ENCODER: option ignored " << name
                   << " 0x" << std::hex << hr << std::dec << std::endl;
+        fern::LogHResult(fern::LogLevel::Warning, L"VIDEO_ENCODER", L"Option ignored " + std::wstring(name, name + strlen(name)), hr);
     }
 }
 
@@ -73,6 +108,7 @@ void SetCodecApiBool(ICodecAPI* codecApi, const GUID& property, bool value, cons
     if (FAILED(hr)) {
         std::cerr << "VIDEO ENCODER: option ignored " << name
                   << " 0x" << std::hex << hr << std::dec << std::endl;
+        fern::LogHResult(fern::LogLevel::Warning, L"VIDEO_ENCODER", L"Option ignored " + std::wstring(name, name + strlen(name)), hr);
     }
 }
 
@@ -131,6 +167,7 @@ HRESULT InitializeHardwareEncoder(IMFDXGIDeviceManager* pDeviceManager, ComPtr<I
     hr = MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, nullptr, &outputInfo, &ppActivate, &count);
     if ((FAILED(hr) || count == 0) && IsHevcCodec(settings)) {
         std::cerr << "VIDEO ENCODER: HEVC hardware encoder unavailable, falling back to H.264." << std::endl;
+        fern::LogWarning(L"VIDEO_ENCODER", L"HEVC hardware encoder unavailable; falling back to H.264.");
         effectiveSettings.codec = L"H264";
         subtype = MFVideoFormat_H264;
         outputInfo.guidSubtype = subtype;
@@ -138,13 +175,29 @@ HRESULT InitializeHardwareEncoder(IMFDXGIDeviceManager* pDeviceManager, ComPtr<I
         count = 0;
         hr = MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, nullptr, &outputInfo, &ppActivate, &count);
     }
-    if (FAILED(hr) || count == 0) return E_FAIL;
+    if (FAILED(hr) || count == 0) {
+        fern::LogHResult(fern::LogLevel::Error, L"VIDEO_ENCODER", L"No hardware encoder found for " + VideoSettingsText(effectiveSettings, width, height), FAILED(hr) ? hr : E_FAIL);
+        return E_FAIL;
+    }
+
+    {
+        std::wostringstream stream;
+        stream << L"Hardware encoder candidates=" << count << L" " << VideoSettingsText(effectiveSettings, width, height);
+        for (UINT32 i = 0; i < count; ++i) {
+            stream << L" [" << i << L"]=" << ActivateName(ppActivate[i]);
+        }
+        fern::LogInfo(L"VIDEO_ENCODER", stream.str());
+    }
 
     const UINT32 encoderIndex = static_cast<UINT32>(std::clamp(settings.encoderIndex, 0, static_cast<int>(count - 1)));
+    fern::LogInfo(L"VIDEO_ENCODER", L"Selected hardware encoder [" + std::to_wstring(encoderIndex) + L"]=" + ActivateName(ppActivate[encoderIndex]));
     hr = ppActivate[encoderIndex]->ActivateObject(IID_PPV_ARGS(&pEncoder));
     for (UINT32 i = 0; i < count; i++) ppActivate[i]->Release();
     CoTaskMemFree(ppActivate);
-    if (FAILED(hr)) return hr;
+    if (FAILED(hr)) {
+        fern::LogHResult(fern::LogLevel::Error, L"VIDEO_ENCODER", L"ActivateObject failed.", hr);
+        return hr;
+    }
 
     ComPtr<IMFAttributes> pAttributes;
     if (SUCCEEDED(pEncoder->GetAttributes(&pAttributes))) {
@@ -170,6 +223,7 @@ HRESULT InitializeHardwareEncoder(IMFDXGIDeviceManager* pDeviceManager, ComPtr<I
     hr = pEncoder->SetOutputType(0, pOutputType.Get(), 0);
     if (FAILED(hr)) {
         std::cerr << "VIDEO ENCODER ERROR: SetOutputType failed 0x" << std::hex << hr << std::dec << std::endl;
+        fern::LogHResult(fern::LogLevel::Error, L"VIDEO_ENCODER", L"SetOutputType failed.", hr);
         return hr;
     }
     pEncoder->ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, (ULONG_PTR)pDeviceManager);
@@ -181,9 +235,11 @@ HRESULT InitializeHardwareEncoder(IMFDXGIDeviceManager* pDeviceManager, ComPtr<I
         hr = pEncoder->SetInputType(0, pInputType.Get(), 0);
         if (FAILED(hr)) {
             std::cerr << "VIDEO ENCODER ERROR: SetInputType failed 0x" << std::hex << hr << std::dec << std::endl;
+            fern::LogHResult(fern::LogLevel::Error, L"VIDEO_ENCODER", L"SetInputType failed.", hr);
             return hr;
         }
     }
+    fern::LogInfo(L"VIDEO_ENCODER", L"Video encoder initialized.");
     return S_OK;
 }
 
@@ -194,12 +250,19 @@ HRESULT InitializeAudioEncoder(ComPtr<IMFTransform>& pEncoder, WAVEFORMATEX* pIn
     MFT_REGISTER_TYPE_INFO outputInfo = { MFMediaType_Audio, MFAudioFormat_AAC };
 
     hr = MFTEnumEx(MFT_CATEGORY_AUDIO_ENCODER, MFT_ENUM_FLAG_ALL, nullptr, &outputInfo, &ppActivate, &count);
-    if (FAILED(hr) || count == 0) return E_FAIL;
+    if (FAILED(hr) || count == 0) {
+        fern::LogHResult(fern::LogLevel::Warning, L"AUDIO_ENCODER", L"No AAC encoder found.", FAILED(hr) ? hr : E_FAIL);
+        return E_FAIL;
+    }
+    fern::LogInfo(L"AUDIO_ENCODER", L"AAC encoder candidates=" + std::to_wstring(count) + L" selected=" + ActivateName(ppActivate[0]));
 
     hr = ppActivate[0]->ActivateObject(IID_PPV_ARGS(&pEncoder));
     for (UINT32 i = 0; i < count; i++) ppActivate[i]->Release();
     CoTaskMemFree(ppActivate);
-    if (FAILED(hr)) return hr;
+    if (FAILED(hr)) {
+        fern::LogHResult(fern::LogLevel::Warning, L"AUDIO_ENCODER", L"ActivateObject failed.", hr);
+        return hr;
+    }
 
     ComPtr<IMFMediaType> pOutputType;
     MFCreateMediaType(&pOutputType);
@@ -213,6 +276,7 @@ HRESULT InitializeAudioEncoder(ComPtr<IMFTransform>& pEncoder, WAVEFORMATEX* pIn
     hr = pEncoder->SetOutputType(0, pOutputType.Get(), 0);
     if (FAILED(hr)) {
         std::cerr << "AUDIO ENCODER ERROR: SetOutputType failed (0x" << std::hex << hr << ")" << std::endl;
+        fern::LogHResult(fern::LogLevel::Warning, L"AUDIO_ENCODER", L"SetOutputType failed.", hr);
         return hr;
     }
 
@@ -230,9 +294,11 @@ HRESULT InitializeAudioEncoder(ComPtr<IMFTransform>& pEncoder, WAVEFORMATEX* pIn
     hr = pEncoder->SetInputType(0, pInputType.Get(), 0);
     if (FAILED(hr)) {
         std::cerr << "AUDIO ENCODER ERROR: SetInputType failed (0x" << std::hex << hr << ")" << std::endl;
+        fern::LogHResult(fern::LogLevel::Warning, L"AUDIO_ENCODER", L"SetInputType failed.", hr);
         return hr;
     }
 
+    fern::LogInfo(L"AUDIO_ENCODER", L"Audio encoder initialized.");
     return S_OK;
 }
 

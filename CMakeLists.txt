@@ -13,6 +13,7 @@ add_executable(Fern WIN32
     src/encoder.cpp
     src/buffer.cpp
     src/settings.cpp
+    src/logger.cpp
     src/ipc_server.cpp
     src/hotkey.cpp
     src/dump.cpp
@@ -27,6 +28,7 @@ add_executable(Fern WIN32
     include/fern/encoder.h
     include/fern/buffer.h
     include/fern/settings.h
+    include/fern/logger.h
     include/fern/ipc_server.h
     include/fern/hotkey.h
     include/fern/dump.h

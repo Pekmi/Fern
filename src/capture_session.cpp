@@ -10,6 +10,7 @@
 #include "../include/fern/clock.h"
 #include "../include/fern/encoder.h"
 #include "../include/fern/ipc_server.h"
+#include "../include/fern/logger.h"
 #include "../include/fern/multi_app_audio_capture.h"
 #include "../include/fern/replay_export.h"
 
@@ -23,6 +24,7 @@
 #include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -47,6 +49,42 @@ enum class DesktopFrameResult {
     AccessLost,
     Failed
 };
+
+std::wstring RectText(const RECT& rect) {
+    std::wostringstream stream;
+    stream << L"(" << rect.left << L"," << rect.top << L")-("
+           << rect.right << L"," << rect.bottom << L")";
+    return stream.str();
+}
+
+std::wstring AdapterDescription(IDXGIAdapter1* adapter) {
+    if (!adapter) return L"<null adapter>";
+
+    DXGI_ADAPTER_DESC1 desc{};
+    if (FAILED(adapter->GetDesc1(&desc))) return L"<adapter desc unavailable>";
+
+    std::wostringstream stream;
+    stream << desc.Description
+           << L" vendor=0x" << std::hex << desc.VendorId
+           << L" device=0x" << desc.DeviceId << std::dec
+           << L" dedicatedVideoMb=" << (desc.DedicatedVideoMemory / (1024 * 1024))
+           << L" flags=0x" << std::hex << desc.Flags << std::dec;
+    return stream.str();
+}
+
+std::wstring OutputDescription(IDXGIOutput1* output) {
+    if (!output) return L"<null output>";
+
+    DXGI_OUTPUT_DESC desc{};
+    if (FAILED(output->GetDesc(&desc))) return L"<output desc unavailable>";
+
+    std::wostringstream stream;
+    stream << desc.DeviceName
+           << L" desktop=" << RectText(desc.DesktopCoordinates)
+           << L" attached=" << (desc.AttachedToDesktop ? L"true" : L"false")
+           << L" rotation=" << desc.Rotation;
+    return stream.str();
+}
 
 void EnableD3D11MultithreadProtection(ID3D11Device* device) {
     if (!device) return;
@@ -78,6 +116,9 @@ HRESULT CreateD3D11DeviceForAdapter(IDXGIAdapter1* adapter, D3D11Context& d3d) {
 
     if (SUCCEEDED(hr)) {
         EnableD3D11MultithreadProtection(d3d.device.Get());
+        fern::LogInfo(L"D3D11", L"Device created for " + AdapterDescription(adapter));
+    } else {
+        fern::LogHResult(fern::LogLevel::Error, L"D3D11", L"Device creation failed for " + AdapterDescription(adapter), hr);
     }
 
     return hr;
@@ -100,6 +141,7 @@ bool TryCreateCopyTexture(ID3D11Device* device, UINT width, UINT height, ComPtr<
     const HRESULT hr = device->CreateTexture2D(&copyDesc, nullptr, &texture);
     if (FAILED(hr) || !texture) {
         std::cerr << "VIDEO: copy texture creation failed 0x" << std::hex << hr << std::dec << std::endl;
+        fern::LogHResult(fern::LogLevel::Error, L"VIDEO", L"Copy texture creation failed.", hr);
         return false;
     }
 
@@ -111,15 +153,24 @@ bool TryCreateDesktopCaptureTarget(DesktopCaptureTarget& target) {
 
     auto factory = getFactory1();
     auto adapters = getAdapters1(factory.Get());
+    fern::LogInfo(L"DXGI", L"Adapter count=" + std::to_wstring(adapters.size()));
     if (adapters.empty()) {
         std::cerr << "DXGI: no adapter found." << std::endl;
+        fern::LogError(L"DXGI", L"No adapter found.");
         return false;
     }
 
-    for (const auto& adapter : adapters) {
+    for (size_t adapterIndex = 0; adapterIndex < adapters.size(); ++adapterIndex) {
+        const auto& adapter = adapters[adapterIndex];
         if (!adapter) continue;
 
         auto outputs = getOutputs1(adapter.Get());
+        {
+            std::wostringstream stream;
+            stream << L"adapter[" << adapterIndex << L"] " << AdapterDescription(adapter.Get())
+                   << L" outputs=" << outputs.size();
+            fern::LogInfo(L"DXGI", stream.str());
+        }
         if (outputs.empty()) continue;
 
         D3D11Context d3d;
@@ -132,8 +183,16 @@ bool TryCreateDesktopCaptureTarget(DesktopCaptureTarget& target) {
             continue;
         }
 
-        for (const auto& output : outputs) {
+        for (size_t outputIndex = 0; outputIndex < outputs.size(); ++outputIndex) {
+            const auto& output = outputs[outputIndex];
             if (!output) continue;
+
+            {
+                std::wostringstream stream;
+                stream << L"adapter[" << adapterIndex << L"].output[" << outputIndex << L"] "
+                       << OutputDescription(output.Get());
+                fern::LogInfo(L"DXGI", stream.str());
+            }
 
             ComPtr<IDXGIOutputDuplication> duplication;
             hr = output->DuplicateOutput(d3d.device.Get(), &duplication);
@@ -144,6 +203,11 @@ bool TryCreateDesktopCaptureTarget(DesktopCaptureTarget& target) {
                 target.d3d = d3d;
                 target.duplication = duplication;
                 target.outputName = outputDesc.DeviceName;
+                std::wostringstream stream;
+                stream << L"Selected output " << OutputDescription(output.Get())
+                       << L" mode=" << target.duplicationDesc.ModeDesc.Width
+                       << L"x" << target.duplicationDesc.ModeDesc.Height;
+                fern::LogInfo(L"DXGI", stream.str());
                 return true;
             }
 
@@ -151,9 +215,15 @@ bool TryCreateDesktopCaptureTarget(DesktopCaptureTarget& target) {
             output->GetDesc(&outputDesc);
             std::wcerr << L"DXGI: DuplicateOutput failed for " << outputDesc.DeviceName
                        << L" 0x" << std::hex << hr << std::dec << std::endl;
+            fern::LogHResult(
+                fern::LogLevel::Warning,
+                L"DXGI",
+                L"DuplicateOutput failed for " + std::wstring(outputDesc.DeviceName),
+                hr);
         }
     }
 
+    fern::LogError(L"DXGI", L"No usable desktop duplication target found.");
     return false;
 }
 
@@ -232,6 +302,7 @@ DesktopFrameResult TryUpdateDesktopFrame(IDXGIOutputDuplication* duplication, ID
     if (hr == DXGI_ERROR_ACCESS_LOST) return DesktopFrameResult::AccessLost;
     if (FAILED(hr)) {
         std::cerr << "VIDEO: AcquireNextFrame failed 0x" << std::hex << hr << std::dec << std::endl;
+        fern::LogHResult(fern::LogLevel::Warning, L"VIDEO", L"AcquireNextFrame failed.", hr);
         return DesktopFrameResult::Failed;
     }
 
@@ -298,12 +369,14 @@ bool RebuildVideoPipeline(
     DesktopCaptureTarget rebuiltTarget;
     if (!TryCreateDesktopCaptureTarget(rebuiltTarget)) {
         std::cerr << "VIDEO: desktop duplication rebuild failed." << std::endl;
+        fern::LogError(L"VIDEO", L"Desktop duplication rebuild failed.");
         return false;
     }
 
     auto rebuiltDeviceManager = CreateDXGIDeviceManager(rebuiltTarget.d3d.device.Get());
     if (!rebuiltDeviceManager.deviceManager) {
         std::cerr << "DXGI: device manager rebuild failed." << std::endl;
+        fern::LogError(L"DXGI", L"Device manager rebuild failed.");
         return false;
     }
 
@@ -316,6 +389,7 @@ bool RebuildVideoPipeline(
         BuildVideoEncoderSettings(settings));
     if (FAILED(hr) || !rebuiltEncoder) {
         std::cerr << "VIDEO: encoder rebuild failed 0x" << std::hex << hr << std::dec << std::endl;
+        fern::LogHResult(fern::LogLevel::Error, L"VIDEO", L"Encoder rebuild failed.", hr);
         return false;
     }
 
@@ -331,6 +405,7 @@ bool RebuildVideoPipeline(
 
     if (!BeginVideoEncoderStreaming(rebuiltEncoder.Get())) {
         std::cerr << "VIDEO: encoder streaming restart failed." << std::endl;
+        fern::LogError(L"VIDEO", L"Encoder streaming restart failed.");
         return false;
     }
 
@@ -423,9 +498,11 @@ void StartAsyncSave(
 }
 
 void RunCaptureSession(const Settings& settings) {
+    fern::LogInfo(L"SESSION", L"Capture session starting.");
     DesktopCaptureTarget captureTarget;
     if (!TryCreateDesktopCaptureTarget(captureTarget)) {
         std::cerr << "DXGI: DuplicateOutput failed." << std::endl;
+        fern::LogError(L"SESSION", L"Capture session stopped: desktop duplication unavailable.");
         return;
     }
 
@@ -436,6 +513,7 @@ void RunCaptureSession(const Settings& settings) {
     auto dxgiDeviceManager = CreateDXGIDeviceManager(d3d.device.Get());
     if (!dxgiDeviceManager.deviceManager) {
         std::cerr << "DXGI: device manager creation failed." << std::endl;
+        fern::LogError(L"DXGI", L"Device manager creation failed.");
         return;
     }
 
@@ -448,6 +526,7 @@ void RunCaptureSession(const Settings& settings) {
         BuildVideoEncoderSettings(settings));
     if (FAILED(hr) || !videoEncoder) {
         std::cerr << "VIDEO: encoder init failed 0x" << std::hex << hr << std::dec << std::endl;
+        fern::LogHResult(fern::LogLevel::Error, L"VIDEO", L"Encoder init failed.", hr);
         return;
     }
 
@@ -463,6 +542,7 @@ void RunCaptureSession(const Settings& settings) {
     hr = audioCapture.Start(settings);
     if (FAILED(hr)) {
         std::cerr << "AUDIO: multi-app capture disabled 0x" << std::hex << hr << std::dec << std::endl;
+        fern::LogHResult(fern::LogLevel::Warning, L"AUDIO", L"Multi-app capture disabled.", hr);
     }
 
     ComPtr<IMFMediaEventGenerator> videoEventGen;
@@ -470,6 +550,7 @@ void RunCaptureSession(const Settings& settings) {
 
     if (!BeginVideoEncoderStreaming(videoEncoder.Get())) {
         std::cerr << "VIDEO: encoder streaming start failed." << std::endl;
+        fern::LogError(L"VIDEO", L"Encoder streaming start failed.");
         audioCapture.Stop();
         return;
     }
@@ -489,6 +570,7 @@ void RunCaptureSession(const Settings& settings) {
     bool duplicationLost = false;
     LONGLONG nextDuplicationReconnectHns = 0;
     std::cout << "Capture Fern active (" << settings.fps << " FPS). F9 pour sauvegarder." << std::endl;
+    fern::LogInfo(L"SESSION", L"Capture active.");
 
     while (running) {
         audioCapture.Pump(ringBuffer);
@@ -505,6 +587,7 @@ void RunCaptureSession(const Settings& settings) {
             if (frameResult == DesktopFrameResult::AccessLost) {
                 if (!duplicationLost) {
                     std::cerr << "VIDEO: duplication access lost; reconnecting." << std::endl;
+                    fern::LogWarning(L"VIDEO", L"Desktop duplication access lost; reconnecting.");
                     ClearTexture(d3d.device.Get(), d3d.deviceContext.Get(), copyTexture.Get());
                     duplicationLost = true;
                     nextDuplicationReconnectHns = 0;
@@ -534,9 +617,11 @@ void RunCaptureSession(const Settings& settings) {
                             } else {
                                 duplicationLost = false;
                                 std::cerr << "VIDEO: desktop duplication restored." << std::endl;
+                                fern::LogInfo(L"VIDEO", L"Desktop duplication restored.");
                             }
                         } else {
                             std::cerr << "VIDEO: display mode changed; rebuilding video pipeline." << std::endl;
+                            fern::LogWarning(L"VIDEO", L"Display mode changed; rebuilding video pipeline.");
                             if (RebuildVideoPipeline(
                                     settings,
                                     captureTarget,
@@ -551,6 +636,7 @@ void RunCaptureSession(const Settings& settings) {
                                 framesProduced = 0;
                                 pendingSave = false;
                                 std::cerr << "VIDEO: video pipeline rebuilt; replay buffer restarted." << std::endl;
+                                fern::LogInfo(L"VIDEO", L"Video pipeline rebuilt; replay buffer restarted.");
                                 frameResult = TryUpdateDesktopFrame(outputDuplication.Get(), d3d.deviceContext.Get(), copyTexture.Get());
                                 if (frameResult == DesktopFrameResult::AccessLost) {
                                     ClearTexture(d3d.device.Get(), d3d.deviceContext.Get(), copyTexture.Get());
@@ -569,6 +655,7 @@ void RunCaptureSession(const Settings& settings) {
             } else if (duplicationLost && (frameResult == DesktopFrameResult::Updated || frameResult == DesktopFrameResult::Unchanged)) {
                 duplicationLost = false;
                 std::cerr << "VIDEO: desktop duplication restored." << std::endl;
+                fern::LogInfo(L"VIDEO", L"Desktop duplication restored.");
             }
 
             const LONGLONG nextBoundary = FrameBoundaryHns(nextFrameIndex + 1, settings.fps);
@@ -578,6 +665,7 @@ void RunCaptureSession(const Settings& settings) {
 
             if (FAILED(hr)) {
                 std::cerr << "VIDEO: ProcessInput failed 0x" << std::hex << hr << std::dec << std::endl;
+                fern::LogHResult(fern::LogLevel::Warning, L"VIDEO", L"ProcessInput failed.", hr);
             }
 
             ++nextFrameIndex;
@@ -588,6 +676,7 @@ void RunCaptureSession(const Settings& settings) {
 
         if (triggerSave.exchange(false)) {
             ShowCaptureFeedback();
+            fern::LogInfo(L"SAVE", L"Save requested.");
             pendingSave = true;
             pendingSaveEndHns = FrameBoundaryHns(nextFrameIndex, settings.fps);
             pendingSaveReadyHns = CurrentQpcHns() + kSaveAudioSettleHns;
@@ -597,6 +686,7 @@ void RunCaptureSession(const Settings& settings) {
             audioCapture.Pump(ringBuffer);
             DrainVideoEncoder(videoEncoder.Get(), videoEventGen.Get(), ringBuffer, framesProduced, settings.fps);
             StartAsyncSave(ringBuffer, videoEncoder.Get(), audioCapture, settings.storagePath, pendingSaveEndHns);
+            fern::LogInfo(L"SAVE", L"Async save started.");
             pendingSave = false;
         }
 
@@ -606,6 +696,7 @@ void RunCaptureSession(const Settings& settings) {
 
     if (frameTimer) CloseHandle(frameTimer);
     audioCapture.Stop();
+    fern::LogInfo(L"SESSION", L"Capture session stopped.");
 }
 
 }

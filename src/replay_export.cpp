@@ -15,6 +15,7 @@
 #include <limits>
 #include <sstream>
 
+#include "../include/fern/logger.h"
 #include "../include/fern/replay_export.h"
 
 
@@ -138,7 +139,22 @@ void PrepareAudioTracksForExport(
 
         if (track.streamIndex == 0 || track.streamIndex >= types.size()) continue;
         if (track.activeDurationHns < kMinimumTrackActiveHns) {
+            std::wostringstream stream;
+            stream << L"Disabling inactive audio track stream=" << track.streamIndex
+                   << L" pid=" << track.pid
+                   << L" name=" << track.name
+                   << L" activeDurationHns=" << track.activeDurationHns
+                   << L" activeRatio=" << track.activeRatio;
+            fern::LogInfo(L"SAVE", stream.str());
             types[track.streamIndex].Reset();
+        } else {
+            std::wostringstream stream;
+            stream << L"Keeping audio track stream=" << track.streamIndex
+                   << L" pid=" << track.pid
+                   << L" name=" << track.name
+                   << L" activeDurationHns=" << track.activeDurationHns
+                   << L" activeRatio=" << track.activeRatio;
+            fern::LogInfo(L"SAVE", stream.str());
         }
     }
 }
@@ -168,6 +184,7 @@ bool WriteAudioBundle(
     if (FAILED(hr) || !writer) {
         std::wcerr << L"SAVE: audio bundle writer failed " << bundleFilename
                    << L" 0x" << std::hex << hr << std::dec << std::endl;
+        fern::LogHResult(fern::LogLevel::Warning, L"SAVE", L"Audio bundle writer failed: " + bundleFilename, hr);
         return false;
     }
 
@@ -181,6 +198,7 @@ bool WriteAudioBundle(
         if (FAILED(hr)) {
             std::wcerr << L"SAVE: audio bundle AddStream failed " << bundleFilename
                        << L" 0x" << std::hex << hr << std::dec << std::endl;
+            fern::LogHResult(fern::LogLevel::Warning, L"SAVE", L"Audio bundle AddStream failed: " + bundleFilename, hr);
             return false;
         }
 
@@ -189,11 +207,13 @@ bool WriteAudioBundle(
     }
 
     if (audioStreamCount == 0) return false;
+    fern::LogInfo(L"SAVE", L"Writing audio bundle streams=" + std::to_wstring(audioStreamCount));
 
     hr = writer->BeginWriting();
     if (FAILED(hr)) {
         std::wcerr << L"SAVE: audio bundle BeginWriting failed " << bundleFilename
                    << L" 0x" << std::hex << hr << std::dec << std::endl;
+        fern::LogHResult(fern::LogLevel::Warning, L"SAVE", L"Audio bundle BeginWriting failed: " + bundleFilename, hr);
         return false;
     }
 
@@ -230,6 +250,7 @@ bool WriteAudioBundle(
         if (FAILED(hr)) {
             std::wcerr << L"SAVE: audio bundle WriteSample failed " << bundleFilename
                        << L" 0x" << std::hex << hr << std::dec << std::endl;
+            fern::LogHResult(fern::LogLevel::Warning, L"SAVE", L"Audio bundle WriteSample failed: " + bundleFilename, hr);
             continue;
         }
 
@@ -241,9 +262,11 @@ bool WriteAudioBundle(
     if (FAILED(hr)) {
         std::wcerr << L"SAVE: audio bundle Finalize failed " << bundleFilename
                    << L" 0x" << std::hex << hr << std::dec << std::endl;
+        fern::LogHResult(fern::LogLevel::Warning, L"SAVE", L"Audio bundle Finalize failed: " + bundleFilename, hr);
         return false;
     }
 
+    fern::LogInfo(L"SAVE", L"Audio bundle written samples=" + std::to_wstring(writtenSamples));
     return writtenSamples > 0;
 }
 
@@ -263,6 +286,7 @@ bool WriteFernPackage(
     std::ofstream packageFile(packagePath, std::ios::binary | std::ios::trunc);
     if (!packageFile.is_open()) {
         std::wcerr << L"SAVE: package open failed " << packagePath.wstring() << std::endl;
+        fern::LogError(L"SAVE", L"Package open failed: " + packagePath.wstring());
         return false;
     }
 
@@ -282,7 +306,9 @@ bool WriteFernPackage(
         if (read > 0) packageFile.write(buffer, read);
     }
 
-    return packageFile.good();
+    const bool ok = packageFile.good();
+    fern::LogInfo(L"SAVE", (ok ? L"Fern package written: " : L"Fern package write failed: ") + packagePath.wstring());
+    return ok;
 }
 
 
@@ -366,12 +392,16 @@ void AsyncSaveWorker(
     HRESULT hr = MFStartup(MF_VERSION);
     if (FAILED(hr)) {
         std::cerr << "SAVE: MFStartup failed 0x" << std::hex << hr << std::dec << std::endl;
+        fern::LogHResult(fern::LogLevel::Error, L"SAVE", L"MFStartup failed.", hr);
         if (coInitialized) CoUninitialize();
         return;
     }
 
+    fern::LogInfo(L"SAVE", L"Async save worker started: " + filename);
+
     if (samples.empty() || types.empty() || !types[0]) {
         std::cerr << "SAVE: no samples or media type." << std::endl;
+        fern::LogError(L"SAVE", L"No samples or media type.");
         MFShutdown();
         if (coInitialized) CoUninitialize();
         return;
@@ -400,6 +430,7 @@ void AsyncSaveWorker(
 
     if (exportStart < 0) {
         std::cerr << "SAVE: no video keyframe found, export skipped." << std::endl;
+        fern::LogWarning(L"SAVE", L"No video keyframe found; export skipped.");
         MFShutdown();
         if (coInitialized) CoUninitialize();
         return;
@@ -415,6 +446,7 @@ void AsyncSaveWorker(
     hr = MFCreateSinkWriterFromURL(filename.c_str(), nullptr, attributes.Get(), &sinkWriter);
     if (FAILED(hr)) {
         std::cerr << "SAVE: MFCreateSinkWriterFromURL failed 0x" << std::hex << hr << std::dec << std::endl;
+        fern::LogHResult(fern::LogLevel::Error, L"SAVE", L"MFCreateSinkWriterFromURL failed.", hr);
         MFShutdown();
         if (coInitialized) CoUninitialize();
         return;
@@ -425,6 +457,7 @@ void AsyncSaveWorker(
     hr = sinkWriter->AddStream(types[0].Get(), &sinkStreamIndices[0]);
     if (FAILED(hr)) {
         std::cerr << "SAVE: AddStream video failed 0x" << std::hex << hr << std::dec << std::endl;
+        fern::LogHResult(fern::LogLevel::Error, L"SAVE", L"AddStream video failed.", hr);
         MFShutdown();
         if (coInitialized) CoUninitialize();
         return;
@@ -436,6 +469,7 @@ void AsyncSaveWorker(
         hr = sinkWriter->AddStream(types[i].Get(), &sinkStreamIndices[i]);
         if (FAILED(hr)) {
             std::cerr << "SAVE: AddStream audio " << i << " failed 0x" << std::hex << hr << std::dec << std::endl;
+            fern::LogHResult(fern::LogLevel::Error, L"SAVE", L"AddStream audio " + std::to_wstring(i) + L" failed.", hr);
             MFShutdown();
             if (coInitialized) CoUninitialize();
             return;
@@ -445,6 +479,7 @@ void AsyncSaveWorker(
     hr = sinkWriter->BeginWriting();
     if (FAILED(hr)) {
         std::cerr << "SAVE: BeginWriting failed 0x" << std::hex << hr << std::dec << std::endl;
+        fern::LogHResult(fern::LogLevel::Error, L"SAVE", L"BeginWriting failed.", hr);
         MFShutdown();
         if (coInitialized) CoUninitialize();
         return;
@@ -490,6 +525,7 @@ void AsyncSaveWorker(
         if (FAILED(hr)) {
             std::cerr << "SAVE: WriteSample stream " << sample.streamIndex
                       << " failed 0x" << std::hex << hr << std::dec << std::endl;
+            fern::LogHResult(fern::LogLevel::Warning, L"SAVE", L"WriteSample stream " + std::to_wstring(sample.streamIndex) + L" failed.", hr);
             continue;
         }
 
@@ -501,7 +537,9 @@ void AsyncSaveWorker(
     hr = sinkWriter->Finalize();
     if (FAILED(hr)) {
         std::cerr << "SAVE: Finalize failed 0x" << std::hex << hr << std::dec << std::endl;
+        fern::LogHResult(fern::LogLevel::Error, L"SAVE", L"Finalize failed.", hr);
     } else {
+        fern::LogInfo(L"SAVE", L"MP4 finalized: " + filename);
         const std::wstring audioBundleFilename = BuildAudioBundleFilename(filename);
         if (WriteAudioBundle(sortedSamples, types, sinkStreamIndices, audioBundleFilename, exportStart, exportEndHns, attributes.Get())) {
             const std::string manifestJson = BuildAudioTrackManifestJson(audioTrackMetadata, sinkStreamIndices);
@@ -522,6 +560,19 @@ void AsyncSaveWorker(
                << L" (video=" << writtenVideo
                << L", audioStreams=" << audioStreamCount
                << L", audioSamples=" << writtenAudioTotal << L")" << std::endl;
+
+    {
+        std::wostringstream stream;
+        stream << L"Export complete file=" << filename
+               << L" videoSamples=" << writtenVideo
+               << L" audioStreams=" << audioStreamCount
+               << L" audioSamples=" << writtenAudioTotal;
+        for (size_t i = 1; i < writtenAudio.size(); ++i) {
+            if (sinkStreamIndices[i] == std::numeric_limits<DWORD>::max()) continue;
+            stream << L" stream" << i << L"=" << writtenAudio[i];
+        }
+        fern::LogInfo(L"SAVE", stream.str());
+    }
 
     MFShutdown();
     if (coInitialized) CoUninitialize();

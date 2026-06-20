@@ -8,6 +8,7 @@
 #include "../include/fern/clock.h"
 #include "../include/fern/encoder.h"
 #include "../include/fern/isolatedAudioCapture.h"
+#include "../include/fern/logger.h"
 
 #include <audiopolicy.h>
 #include <mferror.h>
@@ -17,6 +18,7 @@
 #include <filesystem>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <utility>
 
 using Microsoft::WRL::ComPtr;
@@ -60,6 +62,19 @@ std::wstring ProcessLabel(DWORD pid) {
     CloseHandle(process);
     if (label.empty()) label = L"Application " + std::to_wstring(pid);
     return label;
+}
+
+std::wstring WaveFormatText(const WAVEFORMATEX* format) {
+    if (!format) return L"<null format>";
+
+    std::wostringstream stream;
+    stream << L"tag=0x" << std::hex << format->wFormatTag << std::dec
+           << L" channels=" << format->nChannels
+           << L" sampleRate=" << format->nSamplesPerSec
+           << L" bits=" << format->wBitsPerSample
+           << L" blockAlign=" << format->nBlockAlign
+           << L" avgBytesPerSec=" << format->nAvgBytesPerSec;
+    return stream.str();
 }
 
 std::wstring SessionDisplayName(IAudioSessionControl* control) {
@@ -257,12 +272,17 @@ HRESULT MultiAppAudioCapture::Start(const Settings& settings) {
     m_isRunning = true;
     m_replayBufferDurationHns = std::max<LONGLONG>(0, static_cast<LONGLONG>(settings.bufferDuration)) * HnsPerSecond;
     m_lastRefreshHns = 0;
+    m_lastCandidateSignature.clear();
+    fern::LogInfo(L"AUDIO", L"Multi-app audio capture starting.");
     AddMicrophoneSource(settings.microphoneDeviceId);
     RefreshSources();
     return S_OK;
 }
 
 void MultiAppAudioCapture::Stop() {
+    if (m_isRunning) {
+        fern::LogInfo(L"AUDIO", L"Multi-app audio capture stopping.");
+    }
     m_isRunning = false;
     for (auto& source : m_sources) {
         if (source && source->capture) source->capture->Stop();
@@ -352,6 +372,20 @@ void MultiAppAudioCapture::RefreshSources() {
     if (!m_isRunning) return;
 
     const std::vector<AudioProcessCandidate> candidates = EnumerateActiveAudioProcesses();
+    std::wostringstream signature;
+    std::wostringstream details;
+    details << L"Active audio session candidates=" << candidates.size();
+    for (const auto& candidate : candidates) {
+        signature << candidate.pid << L":" << candidate.label << L";";
+        details << L" [" << candidate.label << L" pid=" << candidate.pid << L"]";
+    }
+
+    const std::wstring candidateSignature = signature.str();
+    if (candidateSignature != m_lastCandidateSignature) {
+        fern::LogInfo(L"AUDIO", details.str());
+        m_lastCandidateSignature = candidateSignature;
+    }
+
     for (const auto& candidate : candidates) {
         if (candidate.pid == 0 || HasSource(candidate.pid)) continue;
         AddSource(candidate.pid, candidate.label);
@@ -377,6 +411,9 @@ HRESULT MultiAppAudioCapture::AddSource(DWORD pid, const std::wstring& label) {
 
 HRESULT MultiAppAudioCapture::AddMicrophoneSource(const std::wstring& deviceId) {
     auto capture = std::make_unique<IsolatedAudioCapture>(deviceId);
+    fern::LogInfo(L"AUDIO", deviceId.empty()
+        ? L"Adding default microphone source."
+        : L"Adding configured microphone source.");
     return AddCaptureSource(std::move(capture), 0, L"Micro");
 }
 
@@ -388,6 +425,10 @@ HRESULT MultiAppAudioCapture::AddCaptureSource(std::unique_ptr<IsolatedAudioCapt
         std::wcerr << L"AUDIO: capture failed for " << label;
         if (pid != 0) std::wcerr << L" (pid=" << pid << L")";
         std::wcerr << L" 0x" << std::hex << hr << std::dec << std::endl;
+        std::wostringstream stream;
+        stream << L"Capture failed for " << label;
+        if (pid != 0) stream << L" pid=" << pid;
+        fern::LogHResult(fern::LogLevel::Warning, L"AUDIO", stream.str(), hr);
         return hr;
     }
 
@@ -403,6 +444,10 @@ HRESULT MultiAppAudioCapture::AddCaptureSource(std::unique_ptr<IsolatedAudioCapt
         std::wcerr << L"AUDIO: encoder init failed for " << label;
         if (pid != 0) std::wcerr << L" (pid=" << pid << L")";
         std::wcerr << L" 0x" << std::hex << hr << std::dec << std::endl;
+        std::wostringstream stream;
+        stream << L"Encoder init failed for " << label;
+        if (pid != 0) stream << L" pid=" << pid;
+        fern::LogHResult(fern::LogLevel::Warning, L"AUDIO", stream.str(), hr);
         capture->Stop();
         return FAILED(hr) ? hr : E_FAIL;
     }
@@ -416,6 +461,10 @@ HRESULT MultiAppAudioCapture::AddCaptureSource(std::unique_ptr<IsolatedAudioCapt
         std::wcerr << L"AUDIO: output type unavailable for " << label;
         if (pid != 0) std::wcerr << L" (pid=" << pid << L")";
         std::wcerr << L" 0x" << std::hex << hr << std::dec << std::endl;
+        std::wostringstream stream;
+        stream << L"Output type unavailable for " << label;
+        if (pid != 0) stream << L" pid=" << pid;
+        fern::LogHResult(fern::LogLevel::Warning, L"AUDIO", stream.str(), hr);
         capture->Stop();
         return FAILED(hr) ? hr : E_FAIL;
     }
@@ -432,6 +481,14 @@ HRESULT MultiAppAudioCapture::AddCaptureSource(std::unique_ptr<IsolatedAudioCapt
                << source->label;
     if (source->pid != 0) std::wcout << L" (pid=" << source->pid << L")";
     std::wcout << std::endl;
+
+    {
+        std::wostringstream stream;
+        stream << L"Track " << source->streamIndex << L" added label=" << source->label;
+        if (source->pid != 0) stream << L" pid=" << source->pid;
+        stream << L" inputFormat={" << WaveFormatText(source->capture ? source->capture->GetFormat() : nullptr) << L"}";
+        fern::LogInfo(L"AUDIO", stream.str());
+    }
 
     m_sources.push_back(std::move(source));
     return S_OK;

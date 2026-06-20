@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <thread>
 #include <cwctype>
 #include <shellapi.h>
@@ -21,6 +22,7 @@
 #include "../include/fern/encoder.h"
 #include "../include/fern/hotkey.h"
 #include "../include/fern/ipc_server.h"
+#include "../include/fern/logger.h"
 #include "../include/fern/settings.h"
 
 
@@ -281,7 +283,24 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     const bool timerPeriodSet = (timeBeginPeriod(1) == TIMERR_NOERROR);
 
     InitializeConsoleOutput();
+    fern::InitializeLogging();
+    fern::LogInfo(L"APP", L"Fern engine starting.");
+    fern::LogSystemInfo();
+
     Settings settings = LoadSettings();
+    {
+        std::wostringstream stream;
+        stream << L"settings fps=" << settings.fps
+               << L" bufferDuration=" << settings.bufferDuration
+               << L" bitrateMbps=" << settings.bitrate
+               << L" codec=" << settings.videoCodec
+               << L" profile=" << settings.encoderProfile
+               << L" rateControl=" << settings.rateControl
+               << L" lowLatency=" << (settings.lowLatency ? L"true" : L"false")
+               << L" encoderIndex=" << settings.encoderIndex
+               << L" microphoneSelected=" << (!settings.microphoneDeviceId.empty() ? L"true" : L"false");
+        fern::LogInfo(L"APP", stream.str());
+    }
 
     extern std::atomic<bool> running;
     extern std::atomic<bool> triggerSave;
@@ -292,12 +311,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
 
     const HRESULT mfHr = InitializeMediaFoundation();
     if (SUCCEEDED(mfHr)) {
+        fern::LogInfo(L"MF", L"Media Foundation initialized.");
         fern::RunCaptureSession(settings);
         ShutdownMediaFoundation();
     } else {
         std::cerr << "MF: startup failed 0x" << std::hex << mfHr << std::dec << std::endl;
+        fern::LogHResult(fern::LogLevel::Error, L"MF", L"Media Foundation startup failed.", mfHr);
     }
 
+    fern::LogInfo(L"APP", L"Fern engine stopped.");
+    fern::ShutdownLogging();
     if (timerPeriodSet) timeEndPeriod(1);
     return 0;
 }
