@@ -71,6 +71,7 @@ namespace FernUI.Views
             public int SidecarAudioIndex { get; set; }
             public double ActiveRatio { get; set; }
             public double? Volume { get; set; }
+            public double LufsGain { get; set; } = 1.0;
         }
 
         public StudioPage()
@@ -284,6 +285,7 @@ namespace FernUI.Views
                     Name = name, 
                     Icon = icon, 
                     Volume = manifestInfo?.Volume ?? defaultVolume,
+                    LufsGain = manifestInfo?.LufsGain ?? 1.0,
                     SidecarPath = manifestInfo?.SidecarPath ?? string.Empty,
                     SidecarAudioIndex = manifestInfo?.SidecarAudioIndex ?? 0,
                     ActiveRatio = manifestInfo?.ActiveRatio ?? 0,
@@ -294,10 +296,20 @@ namespace FernUI.Views
                 detectedTracks.Add(model);
             }
 
+            bool isEqualized = false;
+            foreach (var track in detectedTracks)
+            {
+                if (Math.Abs(track.LufsGain - 1.0) > 0.001) isEqualized = true;
+            }
+
+            EqualizeTracksToggle.Toggled -= EqualizeTracksToggle_Toggled;
+            EqualizeTracksToggle.IsOn = isEqualized;
+            EqualizeTracksToggle.Toggled += EqualizeTracksToggle_Toggled;
+
             foreach (var model in detectedTracks
                 .OrderBy(track => track.Name.Contains("voicemeeter", StringComparison.OrdinalIgnoreCase))
                 .ThenByDescending(track => track.ActiveRatio)
-                .ThenBy(track => track.Name, StringComparer.OrdinalIgnoreCase))
+                .ThenBy(track => track.AudioIndex))
             {
                 AudioTracks.Add(model);
             }
@@ -1120,13 +1132,21 @@ namespace FernUI.Views
                     volume = Math.Clamp(volumeValue, 0, 100);
                 }
 
+                double lufsGain = 1.0;
+                if (track.TryGetProperty("lufsGain", out JsonElement lufsGainElement) &&
+                    lufsGainElement.TryGetDouble(out double lufsGainValue))
+                {
+                    lufsGain = Math.Max(lufsGainValue, 0.0);
+                }
+
                 tracksByAudioIndex[audioIndex] = new AudioTrackManifestInfo
                 {
                     Name = name,
                     SidecarPath = audioBundlePath,
                     SidecarAudioIndex = audioIndex,
                     ActiveRatio = Math.Clamp(activeRatio, 0, 1),
-                    Volume = volume
+                    Volume = volume,
+                    LufsGain = lufsGain
                 };
             }
 
@@ -1173,9 +1193,7 @@ namespace FernUI.Views
 
         private static void SaveAudioVolumesToFernPackage(string packagePath, IEnumerable<FernUI.Models.AudioTrack> audioTracks)
         {
-            var volumeByAudioIndex = audioTracks.ToDictionary(
-                track => track.AudioIndex,
-                track => Math.Clamp(track.Volume, 0, 100));
+            var tracksByAudioIndex = audioTracks.ToDictionary(track => track.AudioIndex);
 
             string tempPath = packagePath + ".tmp";
 
@@ -1211,9 +1229,17 @@ namespace FernUI.Views
                 {
                     if (trackNode is not JsonObject trackObject) continue;
                     if (!TryGetInt(trackObject["audioIndex"], out int audioIndex)) continue;
-                    if (!volumeByAudioIndex.TryGetValue(audioIndex, out double volume)) continue;
+                    if (!tracksByAudioIndex.TryGetValue(audioIndex, out var track)) continue;
 
-                    trackObject["volume"] = Math.Round(volume, 2);
+                    trackObject["volume"] = Math.Round(Math.Clamp(track.Volume, 0, 100), 2);
+                    if (Math.Abs(track.LufsGain - 1.0) > 0.001)
+                    {
+                        trackObject["lufsGain"] = Math.Round(Math.Max(track.LufsGain, 0.0), 4);
+                    }
+                    else
+                    {
+                        trackObject.Remove("lufsGain");
+                    }
                 }
 
                 byte[] updatedJsonBytes = JsonSerializer.SerializeToUtf8Bytes(root, new JsonSerializerOptions
@@ -1405,8 +1431,9 @@ namespace FernUI.Views
             if (!_audioPlayers.TryGetValue(track.AudioIndex, out MediaPlayer? player)) return;
 
             double trackVolume = Math.Clamp(track.Volume / 100.0, 0.0, 1.0);
+            double gain = trackVolume * track.LufsGain;
             player.IsMuted = _isMuted;
-            player.Volume = _isMuted ? 0 : CalculateStudioPlayerVolume(trackVolume);
+            player.Volume = _isMuted ? 0 : CalculateStudioPlayerVolume(gain);
         }
 
         private void ApplyAllAudioVolumes()
@@ -1602,7 +1629,7 @@ namespace FernUI.Views
 
         private double CalculateStudioPlayerVolume(double trackVolume)
         {
-            double volume = _studioVolume * CurrentMasterGain * Math.Clamp(trackVolume, 0.0, 1.0);
+            double volume = _studioVolume * CurrentMasterGain * Math.Max(trackVolume, 0.0);
             return Math.Clamp(volume, 0.0, 1.0);
         }
 
@@ -1758,6 +1785,100 @@ namespace FernUI.Views
                 _isNormalizingLufs = false;
                 LufsAutoAdjustButton.IsEnabled = true;
                 LufsAutoAdjustButton.Content = "Ajuster";
+            }
+        }
+
+        private async void EqualizeTracksToggle_Toggled(object sender, RoutedEventArgs e)
+        {
+            if (_selectedClip == null ||
+                string.IsNullOrWhiteSpace(_selectedClip.FilePath) ||
+                _isNormalizingLufs)
+            {
+                return;
+            }
+
+            if (EqualizeTracksToggle.IsOn)
+            {
+                _isNormalizingLufs = true;
+                EqualizeTracksToggle.IsEnabled = false;
+                try
+                {
+                    ReleaseMediaForSourceRewrite();
+                    
+                    var gains = new Dictionary<int, double>();
+                    var tracksCopy = AudioTracks.ToList();
+                    foreach (var track in tracksCopy)
+                    {
+                        var analysis = await StudioLufsService.AnalyzeAsync(_selectedClip.FilePath, new[] { track }, 1.0, CancellationToken.None);
+                        if (analysis != null)
+                        {
+                            double correctionGain = Math.Pow(10.0, (-14.0 - analysis.IntegratedLufs) / 20.0);
+                            double gain = Math.Max(correctionGain, 0.0);
+                            gains[track.AudioIndex] = gain;
+                            track.LufsGain = gain;
+                        }
+                    }
+                    
+                    await StudioLufsService.ApplyTrackGainsAsync(_selectedClip.FilePath, tracksCopy, gains, CancellationToken.None);
+                    
+                    string packagePath = Path.ChangeExtension(_selectedClip.FilePath, ".fern");
+                    if (File.Exists(packagePath)) SaveAudioVolumesToFernPackage(packagePath, tracksCopy);
+                    
+                    InitializeMedia(_selectedClip.FilePath);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Equalize fail: {ex.Message}");
+                    InitializeMedia(_selectedClip.FilePath);
+                }
+                finally
+                {
+                    _isNormalizingLufs = false;
+                    EqualizeTracksToggle.IsEnabled = true;
+                }
+            }
+            else
+            {
+                bool changed = false;
+                var undoGains = new Dictionary<int, double>();
+                var tracksCopy = AudioTracks.ToList();
+                foreach (var track in tracksCopy)
+                {
+                    if (Math.Abs(track.LufsGain - 1.0) > 0.001)
+                    {
+                        double undoGain = track.LufsGain > 0 ? 1.0 / track.LufsGain : 1.0;
+                        undoGains[track.AudioIndex] = undoGain;
+                        track.LufsGain = 1.0;
+                        changed = true;
+                    }
+                }
+                
+                if (changed)
+                {
+                    _isNormalizingLufs = true;
+                    EqualizeTracksToggle.IsEnabled = false;
+                    try
+                    {
+                        ReleaseMediaForSourceRewrite();
+                        
+                        await StudioLufsService.ApplyTrackGainsAsync(_selectedClip.FilePath, tracksCopy, undoGains, CancellationToken.None);
+                        
+                        string packagePath = Path.ChangeExtension(_selectedClip.FilePath, ".fern");
+                        if (File.Exists(packagePath)) SaveAudioVolumesToFernPackage(packagePath, tracksCopy);
+                        
+                        InitializeMedia(_selectedClip.FilePath);
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Equalize undo fail: {ex.Message}");
+                        InitializeMedia(_selectedClip.FilePath);
+                    }
+                    finally
+                    {
+                        _isNormalizingLufs = false;
+                        EqualizeTracksToggle.IsEnabled = true;
+                    }
+                }
             }
         }
 

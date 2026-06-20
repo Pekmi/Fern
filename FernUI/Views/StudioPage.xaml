@@ -206,6 +206,10 @@
                                         Value="0"
                                         StepFrequency="0.1"
                                         ValueChanged="MasterVolumeSlider_ValueChanged"/>
+                                <ToggleSwitch x:Name="EqualizeTracksToggle"
+                                              Header="Égaliser les pistes"
+                                              Margin="0,16,0,0"
+                                              Toggled="EqualizeTracksToggle_Toggled"/>
                             </StackPanel>
                         </StackPanel>
                         

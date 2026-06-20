@@ -107,6 +107,7 @@ namespace FernUI.Models
             } 
         }
         public double PeakLevel { get => _peakLevel; set => SetProperty(ref _peakLevel, value); }
+        public double LufsGain { get; set; } = 1.0;
 
         public event Action<AudioTrack, double>? OnVolumeChanged;
         public event PropertyChangedEventHandler? PropertyChanged;

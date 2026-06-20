@@ -82,7 +82,85 @@ namespace FernUI
                 TryDelete(tempPackagePath);
             }
         }
+        public static async Task ApplyTrackGainsAsync(
+            string sourcePath,
+            IReadOnlyList<AudioTrack> audioTracks,
+            Dictionary<int, double> trackGains,
+            CancellationToken cancellationToken)
+        {
+            if (!File.Exists(sourcePath)) throw new FileNotFoundException("Clip source introuvable.", sourcePath);
 
+            List<AudioTrack> tracks = audioTracks
+                .Where(track => track.AudioIndex >= 0)
+                .OrderBy(track => track.AudioIndex)
+                .ToList();
+
+            if (tracks.Count == 0) throw new InvalidOperationException("Aucune piste audio a modifier.");
+
+            string directory = Path.GetDirectoryName(sourcePath) ?? string.Empty;
+            string stem = Path.GetFileNameWithoutExtension(sourcePath);
+            string tempVideoPath = Path.Combine(directory, $"{stem}.lufs.tmp.mp4");
+            string packagePath = Path.ChangeExtension(sourcePath, ".fern");
+            string tempPackagePath = string.Empty;
+
+            try
+            {
+                await RunFfmpegAsync(BuildTrackGainsVideoArguments(sourcePath, tempVideoPath, tracks, trackGains), cancellationToken);
+                if (File.Exists(packagePath)) tempPackagePath = await CreateUpdatedFernPackageAsync(tempVideoPath, packagePath, cancellationToken);
+                ReplaceFile(tempVideoPath, sourcePath);
+                if (!string.IsNullOrWhiteSpace(tempPackagePath)) ReplaceFile(tempPackagePath, packagePath);
+            }
+            finally
+            {
+                TryDelete(tempVideoPath);
+                TryDelete(tempPackagePath);
+            }
+        }
+
+        private static IEnumerable<string> BuildTrackGainsVideoArguments(
+            string sourcePath,
+            string outputPath,
+            IReadOnlyList<AudioTrack> audioTracks,
+            Dictionary<int, double> trackGains)
+        {
+            yield return "-hide_banner";
+            yield return "-y";
+            yield return "-nostats";
+            yield return "-i";
+            yield return sourcePath;
+            yield return "-filter_complex";
+
+            var filter = new StringBuilder();
+            for (int i = 0; i < audioTracks.Count; i++)
+            {
+                double gain = trackGains.TryGetValue(audioTracks[i].AudioIndex, out double g) ? g : 1.0;
+                string gainStr = gain.ToString("0.######", CultureInfo.InvariantCulture);
+                filter.Append(CultureInfo.InvariantCulture, $"[0:a:{audioTracks[i].AudioIndex}]volume={gainStr}[norm{i}];");
+            }
+            if (filter.Length > 0) filter.Length--;
+            yield return filter.ToString();
+
+            yield return "-map";
+            yield return "0:v:0";
+
+            for (int i = 0; i < audioTracks.Count; i++)
+            {
+                yield return "-map";
+                yield return $"[norm{i}]";
+            }
+
+            yield return "-map_metadata";
+            yield return "0";
+            yield return "-c:v";
+            yield return "copy";
+            yield return "-c:a";
+            yield return "aac";
+            yield return "-b:a";
+            yield return "192k";
+            yield return "-movflags";
+            yield return "+faststart";
+            yield return outputPath;
+        }
         public static async Task<StudioLufsAnalysis?> AnalyzeAsync(
             string sourcePath,
             IReadOnlyList<AudioTrack> audioTracks,
