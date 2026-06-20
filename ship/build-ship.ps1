@@ -6,8 +6,13 @@ param(
     [ValidateSet("Debug", "Release", "RelWithDebInfo")]
     [string]$Configuration = "Release",
 
+    [ValidateSet("Lean", "Portable")]
+    [string]$PackageMode = "Lean",
+
     [switch]$NoZip,
+    [switch]$IncludeFfmpeg,
     [switch]$SkipFfmpeg,
+    [string]$FfmpegPath = "",
     [switch]$SkipBuild
 )
 
@@ -84,6 +89,81 @@ function Copy-WinUiResources {
     }
 }
 
+function Test-FernFfmpeg {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $false
+    }
+
+    try {
+        $encoders = & $Path -hide_banner -encoders 2>$null | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            return $false
+        }
+
+        $filters = & $Path -hide_banner -filters 2>$null | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            return $false
+        }
+
+        return (
+            $encoders -match "\blibx264\b" -and
+            $encoders -match "\baac\b" -and
+            $filters -match "\bloudnorm\b" -and
+            $filters -match "\bamix\b" -and
+            $filters -match "\bvolume\b"
+        )
+    } catch {
+        return $false
+    }
+}
+
+function Resolve-FernFfmpeg {
+    param([string]$RequestedPath)
+
+    $candidatePaths = New-Object System.Collections.Generic.List[string]
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedPath)) {
+        $candidatePaths.Add($RequestedPath)
+    } else {
+        $pathCommand = Get-Command "ffmpeg" -ErrorAction SilentlyContinue
+        if ($pathCommand) {
+            $candidatePaths.Add($pathCommand.Source)
+        }
+
+        $knownPaths = @(
+            (Join-Path $env:ProgramFiles "File Converter\ffmpeg.exe")
+        )
+
+        foreach ($knownPath in $knownPaths) {
+            if (Test-Path -LiteralPath $knownPath) {
+                $candidatePaths.Add($knownPath)
+            }
+        }
+    }
+
+    $compatible = @()
+    foreach ($candidate in ($candidatePaths | Select-Object -Unique)) {
+        $fullPath = [System.IO.Path]::GetFullPath($candidate)
+        if (Test-FernFfmpeg -Path $fullPath) {
+            $item = Get-Item -LiteralPath $fullPath
+            $compatible += [PSCustomObject]@{
+                Path = $item.FullName
+                Length = $item.Length
+            }
+        } elseif (-not [string]::IsNullOrWhiteSpace($RequestedPath)) {
+            throw "Requested ffmpeg is not compatible with Fern Studio features: $fullPath"
+        }
+    }
+
+    if ($compatible.Count -eq 0) {
+        return $null
+    }
+
+    return ($compatible | Sort-Object Length | Select-Object -First 1).Path
+}
+
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $ShipRoot = (Resolve-Path $PSScriptRoot).Path
 $WorkRoot = Join-Path $ShipRoot "work"
@@ -110,6 +190,13 @@ $dotnetPlatformByArch = @{
 $RuntimeId = $runtimeByArch[$Arch]
 $CmakeArch = $cmakeArchByArch[$Arch]
 $DotnetPlatform = $dotnetPlatformByArch[$Arch]
+$UiSelfContained = if ($PackageMode -eq "Portable") { "true" } else { "false" }
+$UiPublishTrimmed = "false"
+$UiPublishReadyToRun = "false"
+$CopyFfmpeg = $IncludeFfmpeg -or ($PackageMode -eq "Portable")
+if ($SkipFfmpeg) {
+    $CopyFfmpeg = $false
+}
 
 $PackageName = "Fern-$RuntimeId"
 $NativeBuildDir = Join-Path $WorkRoot "native-$Arch"
@@ -125,10 +212,11 @@ Require-Command "cmake" | Out-Null
 Require-Command "dotnet" | Out-Null
 
 $ffmpegPath = $null
-if (-not $SkipFfmpeg) {
-    $ffmpeg = Get-Command "ffmpeg" -ErrorAction SilentlyContinue
-    if ($ffmpeg) {
-        $ffmpegPath = $ffmpeg.Source
+if ($CopyFfmpeg) {
+    $ffmpegPath = Resolve-FernFfmpeg -RequestedPath $FfmpegPath
+    if ($ffmpegPath) {
+        $ffmpegSizeMb = [math]::Round((Get-Item -LiteralPath $ffmpegPath).Length / 1MB, 2)
+        Write-Host "Using ffmpeg: $ffmpegPath ($ffmpegSizeMb MB)"
     } else {
         Write-Warning "ffmpeg was not found in PATH. The package will still build, but Studio export/LUFS features need ffmpeg on the target machine."
     }
@@ -154,11 +242,13 @@ if (-not $SkipBuild) {
         "publish", (Join-Path $Root "FernUI\FernUI.csproj"),
         "-c", $Configuration,
         "-r", $RuntimeId,
-        "--self-contained", "true",
+        "--self-contained", $UiSelfContained,
         "-p:Platform=$DotnetPlatform",
         "-p:PublishSingleFile=false",
-        "-p:PublishTrimmed=false",
+        "-p:PublishTrimmed=$UiPublishTrimmed",
+        "-p:PublishReadyToRun=$UiPublishReadyToRun",
         "-p:WindowsPackageType=None",
+        "-p:WindowsAppSDKSelfContained=$UiSelfContained",
         "-p:PublishDir=$UiPublishDir\"
     )
 
@@ -255,6 +345,8 @@ if not exist "%SOURCE%\daemon\Fern.exe" (
 )
 
 echo Installing Fern to "%INSTALL_DIR%"...
+taskkill /IM Fern.exe /F >nul 2>nul
+taskkill /IM FernUI.exe /F >nul 2>nul
 mkdir "%INSTALL_DIR%" >nul 2>nul
 robocopy "%SOURCE%" "%INSTALL_DIR%" /MIR >nul
 if %ERRORLEVEL% GEQ 8 (
@@ -302,6 +394,8 @@ $manifest = [ordered]@{
     name = "Fern"
     runtime = $RuntimeId
     configuration = $Configuration
+    packageMode = $PackageMode
+    uiSelfContained = ($UiSelfContained -eq "true")
     gitCommit = $gitCommit
     builtAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
     includes = [ordered]@{
@@ -309,10 +403,33 @@ $manifest = [ordered]@{
         daemon = "payload/daemon/Fern.exe"
         ffmpeg = [bool]$ffmpegPath
     }
+    requirements = @(
+        if ($PackageMode -eq "Lean") {
+            ".NET 8 Desktop Runtime ($Arch)"
+            "Windows App Runtime 2.1 ($Arch)"
+        }
+        if (-not $ffmpegPath) {
+            "ffmpeg in PATH for Studio export/LUFS"
+        }
+    )
     install = "install.bat"
 }
 
 $manifest | ConvertTo-Json -Depth 5 | Set-Content -Path (Join-Path $PackageRoot "manifest.json") -Encoding UTF8
+
+if ($PackageMode -eq "Lean") {
+    $requirementsText = @"
+Fern lean package requirements
+
+- .NET 8 Desktop Runtime ($Arch)
+- Windows App Runtime 2.1 ($Arch)
+- ffmpeg in PATH for Studio export/LUFS unless this package was built with -IncludeFfmpeg
+
+Build a larger portable package with:
+powershell -ExecutionPolicy Bypass -File .\ship\build-ship.ps1 -PackageMode Portable
+"@
+    Set-Content -Path (Join-Path $PackageRoot "requirements.txt") -Value $requirementsText -Encoding ASCII
+}
 
 if (-not $NoZip) {
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"

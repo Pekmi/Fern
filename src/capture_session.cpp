@@ -42,6 +42,7 @@ struct DesktopCaptureTarget {
     D3D11Context d3d;
     ComPtr<IDXGIOutputDuplication> duplication;
     DXGI_OUTDUPL_DESC duplicationDesc{};
+    RECT desktopRect{};
     std::wstring outputName;
 };
 
@@ -50,6 +51,112 @@ enum class DesktopFrameResult {
     Unchanged,
     AccessLost,
     Failed
+};
+
+struct GdiFrameCapture {
+    UINT width = 0;
+    UINT height = 0;
+    RECT sourceRect{};
+    HDC screenDc = nullptr;
+    HDC memoryDc = nullptr;
+    HBITMAP bitmap = nullptr;
+    HGDIOBJ oldBitmap = nullptr;
+    void* bits = nullptr;
+
+    ~GdiFrameCapture() {
+        Reset();
+    }
+
+    void Reset() {
+        if (memoryDc && oldBitmap) {
+            SelectObject(memoryDc, oldBitmap);
+            oldBitmap = nullptr;
+        }
+        if (bitmap) {
+            DeleteObject(bitmap);
+            bitmap = nullptr;
+        }
+        if (memoryDc) {
+            DeleteDC(memoryDc);
+            memoryDc = nullptr;
+        }
+        if (screenDc) {
+            ReleaseDC(nullptr, screenDc);
+            screenDc = nullptr;
+        }
+        bits = nullptr;
+        width = 0;
+        height = 0;
+        sourceRect = {};
+    }
+
+    bool Initialize(UINT newWidth, UINT newHeight, const RECT& newSourceRect) {
+        if (newWidth == 0 || newHeight == 0) return false;
+
+        if (screenDc && memoryDc && bitmap && bits &&
+            width == newWidth && height == newHeight &&
+            EqualRect(&sourceRect, &newSourceRect)) {
+            return true;
+        }
+
+        Reset();
+        width = newWidth;
+        height = newHeight;
+        sourceRect = newSourceRect;
+
+        screenDc = GetDC(nullptr);
+        if (!screenDc) {
+            Reset();
+            return false;
+        }
+
+        memoryDc = CreateCompatibleDC(screenDc);
+        if (!memoryDc) {
+            Reset();
+            return false;
+        }
+
+        BITMAPINFO info = {};
+        info.bmiHeader.biSize = sizeof(info.bmiHeader);
+        info.bmiHeader.biWidth = static_cast<LONG>(width);
+        info.bmiHeader.biHeight = -static_cast<LONG>(height);
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+
+        bitmap = CreateDIBSection(screenDc, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (!bitmap || !bits) {
+            Reset();
+            return false;
+        }
+
+        oldBitmap = SelectObject(memoryDc, bitmap);
+        if (!oldBitmap) {
+            Reset();
+            return false;
+        }
+
+        return true;
+    }
+
+    bool Capture(ID3D11DeviceContext* context, ID3D11Texture2D* target) {
+        if (!context || !target || !screenDc || !memoryDc || !bits || width == 0 || height == 0) return false;
+
+        const BOOL copied = BitBlt(
+            memoryDc,
+            0,
+            0,
+            static_cast<int>(width),
+            static_cast<int>(height),
+            screenDc,
+            sourceRect.left,
+            sourceRect.top,
+            SRCCOPY | CAPTUREBLT);
+        if (!copied) return false;
+
+        context->UpdateSubresource(target, 0, nullptr, bits, width * 4, 0);
+        return true;
+    }
 };
 
 std::wstring RectText(const RECT& rect) {
@@ -220,6 +327,7 @@ bool TryCreateDesktopCaptureTarget(DesktopCaptureTarget& target) {
                 duplication->GetDesc(&target.duplicationDesc);
                 target.d3d = d3d;
                 target.duplication = duplication;
+                target.desktopRect = outputDesc.DesktopCoordinates;
                 target.outputName = outputDesc.DeviceName;
                 std::wostringstream stream;
                 stream << L"Selected output " << OutputDescription(output.Get())
@@ -250,10 +358,12 @@ bool TryCreateDuplicationOnCurrentDevice(
     const std::wstring& preferredOutputName,
     ComPtr<IDXGIOutputDuplication>& duplication,
     DXGI_OUTDUPL_DESC& duplicationDesc,
-    std::wstring& outputName) {
+    std::wstring& outputName,
+    RECT& desktopRect) {
     duplication.Reset();
     duplicationDesc = {};
     outputName.clear();
+    desktopRect = {};
     if (!device) return false;
 
     ComPtr<IDXGIDevice> dxgiDevice;
@@ -267,6 +377,7 @@ bool TryCreateDuplicationOnCurrentDevice(
     struct CandidateOutput {
         ComPtr<IDXGIOutput1> output;
         std::wstring name;
+        RECT desktopRect;
     };
 
     std::vector<CandidateOutput> candidates;
@@ -281,7 +392,7 @@ bool TryCreateDuplicationOnCurrentDevice(
 
         DXGI_OUTPUT_DESC outputDesc{};
         output->GetDesc(&outputDesc);
-        candidates.push_back({ output1, outputDesc.DeviceName });
+        candidates.push_back({ output1, outputDesc.DeviceName, outputDesc.DesktopCoordinates });
     }
 
     auto tryCandidate = [&](const CandidateOutput& candidate) {
@@ -294,6 +405,7 @@ bool TryCreateDuplicationOnCurrentDevice(
         candidateDuplication->GetDesc(&duplicationDesc);
         duplication = candidateDuplication;
         outputName = candidate.name;
+        desktopRect = candidate.desktopRect;
         return true;
     };
 
@@ -355,10 +467,11 @@ bool BeginVideoEncoderStreaming(IMFTransform* videoEncoder) {
     if (!videoEncoder) return false;
 
     HRESULT hr = videoEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
+    if (hr == E_NOTIMPL) return true;
     if (FAILED(hr)) return false;
 
     hr = videoEncoder->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
-    return SUCCEEDED(hr);
+    return SUCCEEDED(hr) || hr == E_NOTIMPL;
 }
 
 VideoEncoderSettings BuildVideoEncoderSettings(const Settings& settings) {
@@ -383,7 +496,9 @@ bool RebuildVideoPipeline(
     DXGIDeviceManagerAndUInt& dxgiDeviceManager,
     ComPtr<IMFTransform>& videoEncoder,
     ComPtr<IMFMediaEventGenerator>& videoEventGen,
-    ComPtr<ID3D11Texture2D>& copyTexture) {
+    ComPtr<ID3D11Texture2D>& copyTexture,
+    ComPtr<ID3D11Texture2D>& softwareStagingTexture,
+    VideoEncoderRuntime& videoRuntime) {
     DesktopCaptureTarget rebuiltTarget;
     if (!TryCreateDesktopCaptureTarget(rebuiltTarget)) {
         std::cerr << "VIDEO: desktop duplication rebuild failed." << std::endl;
@@ -399,12 +514,14 @@ bool RebuildVideoPipeline(
     }
 
     ComPtr<IMFTransform> rebuiltEncoder;
+    VideoEncoderRuntime rebuiltRuntime;
     HRESULT hr = InitializeHardwareEncoder(
         rebuiltDeviceManager.deviceManager.Get(),
         rebuiltEncoder,
         rebuiltTarget.duplicationDesc.ModeDesc.Width,
         rebuiltTarget.duplicationDesc.ModeDesc.Height,
-        BuildVideoEncoderSettings(settings));
+        BuildVideoEncoderSettings(settings),
+        &rebuiltRuntime);
     if (FAILED(hr) || !rebuiltEncoder) {
         std::cerr << "VIDEO: encoder rebuild failed 0x" << std::hex << hr << std::dec << std::endl;
         fern::LogHResult(fern::LogLevel::Error, L"VIDEO", L"Encoder rebuild failed.", hr);
@@ -421,6 +538,19 @@ bool RebuildVideoPipeline(
     }
     ClearTexture(rebuiltTarget.d3d.device.Get(), rebuiltTarget.d3d.deviceContext.Get(), rebuiltCopyTexture.Get());
 
+    ComPtr<ID3D11Texture2D> rebuiltSoftwareStagingTexture;
+    if (rebuiltRuntime.inputMode == VideoEncoderInputMode::SoftwareNv12) {
+        hr = CreateSoftwareVideoStagingTexture(
+            rebuiltTarget.d3d.device.Get(),
+            rebuiltRuntime.width,
+            rebuiltRuntime.height,
+            rebuiltSoftwareStagingTexture);
+        if (FAILED(hr) || !rebuiltSoftwareStagingTexture) {
+            fern::LogHResult(fern::LogLevel::Error, L"VIDEO", L"Software staging texture rebuild failed.", FAILED(hr) ? hr : E_FAIL);
+            return false;
+        }
+    }
+
     if (!BeginVideoEncoderStreaming(rebuiltEncoder.Get())) {
         std::cerr << "VIDEO: encoder streaming restart failed." << std::endl;
         fern::LogError(L"VIDEO", L"Encoder streaming restart failed.");
@@ -435,6 +565,8 @@ bool RebuildVideoPipeline(
     videoEncoder = rebuiltEncoder;
     videoEventGen = rebuiltEventGen;
     copyTexture = rebuiltCopyTexture;
+    softwareStagingTexture = rebuiltSoftwareStagingTexture;
+    videoRuntime = rebuiltRuntime;
     return true;
 }
 
@@ -536,12 +668,14 @@ void RunCaptureSession(const Settings& settings) {
     }
 
     ComPtr<IMFTransform> videoEncoder;
+    VideoEncoderRuntime videoRuntime;
     HRESULT hr = InitializeHardwareEncoder(
         dxgiDeviceManager.deviceManager.Get(),
         videoEncoder,
         duplicationDesc.ModeDesc.Width,
         duplicationDesc.ModeDesc.Height,
-        BuildVideoEncoderSettings(settings));
+        BuildVideoEncoderSettings(settings),
+        &videoRuntime);
     if (FAILED(hr) || !videoEncoder) {
         std::cerr << "VIDEO: encoder init failed 0x" << std::hex << hr << std::dec << std::endl;
         fern::LogHResult(fern::LogLevel::Error, L"VIDEO", L"Encoder init failed.", hr);
@@ -553,6 +687,20 @@ void RunCaptureSession(const Settings& settings) {
         return;
     }
     ClearTexture(d3d.device.Get(), d3d.deviceContext.Get(), copyTexture.Get());
+
+    ComPtr<ID3D11Texture2D> softwareStagingTexture;
+    if (videoRuntime.inputMode == VideoEncoderInputMode::SoftwareNv12) {
+        hr = CreateSoftwareVideoStagingTexture(
+            d3d.device.Get(),
+            videoRuntime.width,
+            videoRuntime.height,
+            softwareStagingTexture);
+        if (FAILED(hr) || !softwareStagingTexture) {
+            std::cerr << "VIDEO: software staging texture creation failed 0x" << std::hex << hr << std::dec << std::endl;
+            fern::LogHResult(fern::LogLevel::Error, L"VIDEO", L"Software staging texture creation failed.", FAILED(hr) ? hr : E_FAIL);
+            return;
+        }
+    }
 
     RingBuffer ringBuffer(static_cast<LONGLONG>(settings.bufferDuration) * HnsPerSecond);
 
@@ -587,6 +735,8 @@ void RunCaptureSession(const Settings& settings) {
     LONGLONG pendingSaveReadyHns = 0;
     bool duplicationLost = false;
     bool videoBackpressureLogged = false;
+    bool gdiFallbackLogged = false;
+    GdiFrameCapture gdiCapture;
     LONGLONG nextDuplicationReconnectHns = 0;
     LONGLONG nextStatusLogHns = CurrentQpcHns() + kStatusLogIntervalHns;
     std::cout << "Capture Fern active (" << settings.fps << " FPS). F9 pour sauvegarder." << std::endl;
@@ -617,25 +767,29 @@ void RunCaptureSession(const Settings& settings) {
                     ComPtr<IDXGIOutputDuplication> restoredDuplication;
                     DXGI_OUTDUPL_DESC restoredDesc{};
                     std::wstring restoredOutputName;
+                    RECT restoredDesktopRect{};
 
                     if (TryCreateDuplicationOnCurrentDevice(
                             d3d.device.Get(),
                             captureTarget.outputName,
                             restoredDuplication,
                             restoredDesc,
-                            restoredOutputName)) {
+                            restoredOutputName,
+                            restoredDesktopRect)) {
                         if (SameDesktopDimensions(duplicationDesc, restoredDesc)) {
                             outputDuplication = restoredDuplication;
                             duplicationDesc = restoredDesc;
                             captureTarget.duplication = outputDuplication;
                             captureTarget.duplicationDesc = duplicationDesc;
                             captureTarget.outputName = restoredOutputName;
+                            captureTarget.desktopRect = restoredDesktopRect;
                             frameResult = TryUpdateDesktopFrame(outputDuplication.Get(), d3d.deviceContext.Get(), copyTexture.Get());
                             if (frameResult == DesktopFrameResult::AccessLost) {
                                 ClearTexture(d3d.device.Get(), d3d.deviceContext.Get(), copyTexture.Get());
                                 duplicationLost = true;
                             } else {
                                 duplicationLost = false;
+                                gdiFallbackLogged = false;
                                 std::cerr << "VIDEO: desktop duplication restored." << std::endl;
                                 fern::LogInfo(L"VIDEO", L"Desktop duplication restored.");
                             }
@@ -648,10 +802,13 @@ void RunCaptureSession(const Settings& settings) {
                                     dxgiDeviceManager,
                                     videoEncoder,
                                     videoEventGen,
-                                    copyTexture)) {
+                                    copyTexture,
+                                    softwareStagingTexture,
+                                    videoRuntime)) {
                                 d3d = captureTarget.d3d;
                                 outputDuplication = captureTarget.duplication;
                                 duplicationDesc = captureTarget.duplicationDesc;
+                                gdiFallbackLogged = false;
                                 ringBuffer.Clear();
                                 framesProduced = 0;
                                 pendingSave = false;
@@ -663,6 +820,7 @@ void RunCaptureSession(const Settings& settings) {
                                     duplicationLost = true;
                                 } else {
                                     duplicationLost = false;
+                                    gdiFallbackLogged = false;
                                 }
                             }
                         }
@@ -674,17 +832,45 @@ void RunCaptureSession(const Settings& settings) {
                 }
             } else if (duplicationLost && (frameResult == DesktopFrameResult::Updated || frameResult == DesktopFrameResult::Unchanged)) {
                 duplicationLost = false;
+                gdiFallbackLogged = false;
                 std::cerr << "VIDEO: desktop duplication restored." << std::endl;
                 fern::LogInfo(L"VIDEO", L"Desktop duplication restored.");
             }
 
-            if (!duplicationLost) {
+            bool hasFrameForEncoder = !duplicationLost;
+            if (!hasFrameForEncoder &&
+                gdiCapture.Initialize(duplicationDesc.ModeDesc.Width, duplicationDesc.ModeDesc.Height, captureTarget.desktopRect) &&
+                gdiCapture.Capture(d3d.deviceContext.Get(), copyTexture.Get())) {
+                hasFrameForEncoder = true;
+                if (!gdiFallbackLogged) {
+                    fern::LogWarning(L"VIDEO", L"Using GDI screen capture fallback while Desktop Duplication is unavailable.");
+                    gdiFallbackLogged = true;
+                }
+            }
+
+            if (hasFrameForEncoder) {
                 const LONGLONG nextBoundary = FrameBoundaryHns(nextFrameIndex + 1, settings.fps);
                 const LONGLONG duration = std::max<LONGLONG>(1, nextBoundary - relativeDueHns);
-                hr = PushFrameToEncoder(videoEncoder.Get(), copyTexture.Get(), relativeDueHns, duration);
+                auto pushFrame = [&]() {
+                    if (videoRuntime.inputMode == VideoEncoderInputMode::SoftwareNv12) {
+                        return PushSoftwareFrameToEncoder(
+                            videoEncoder.Get(),
+                            d3d.deviceContext.Get(),
+                            copyTexture.Get(),
+                            softwareStagingTexture.Get(),
+                            videoRuntime.width,
+                            videoRuntime.height,
+                            relativeDueHns,
+                            duration);
+                    }
+
+                    return PushFrameToEncoder(videoEncoder.Get(), copyTexture.Get(), relativeDueHns, duration);
+                };
+
+                hr = pushFrame();
                 if (hr == MF_E_NOTACCEPTING) {
                     DrainVideoEncoder(videoEncoder.Get(), videoEventGen.Get(), ringBuffer, framesProduced, settings.fps);
-                    hr = PushFrameToEncoder(videoEncoder.Get(), copyTexture.Get(), relativeDueHns, duration);
+                    hr = pushFrame();
                 }
 
                 if (hr == MF_E_NOTACCEPTING) {

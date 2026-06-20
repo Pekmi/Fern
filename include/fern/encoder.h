@@ -34,10 +34,37 @@ struct VideoEncoderSettings {
     int encoderIndex = 0;
 };
 
+enum class VideoEncoderInputMode {
+    D3D11Texture,
+    SoftwareNv12
+};
+
+struct VideoEncoderRuntime {
+    VideoEncoderInputMode inputMode = VideoEncoderInputMode::D3D11Texture;
+    UINT width = 0;
+    UINT height = 0;
+};
+
 //init encodeur hardware MFT (Vidéo)
-HRESULT InitializeHardwareEncoder(IMFDXGIDeviceManager* pDeviceManager, ComPtr<IMFTransform>& pEncoder, UINT width, UINT height, const VideoEncoderSettings& settings);
+HRESULT InitializeHardwareEncoder(
+    IMFDXGIDeviceManager* pDeviceManager,
+    ComPtr<IMFTransform>& pEncoder,
+    UINT width,
+    UINT height,
+    const VideoEncoderSettings& settings,
+    VideoEncoderRuntime* runtime = nullptr);
 //envoie une frame au MFT
 HRESULT PushFrameToEncoder(IMFTransform* pEncoder, ID3D11Texture2D* pTexture, LONGLONG hnsTimestamp, LONGLONG durationHns);
+HRESULT CreateSoftwareVideoStagingTexture(ID3D11Device* device, UINT width, UINT height, ComPtr<ID3D11Texture2D>& texture);
+HRESULT PushSoftwareFrameToEncoder(
+    IMFTransform* pEncoder,
+    ID3D11DeviceContext* context,
+    ID3D11Texture2D* sourceTexture,
+    ID3D11Texture2D* stagingTexture,
+    UINT width,
+    UINT height,
+    LONGLONG hnsTimestamp,
+    LONGLONG durationHns);
 
 //init encodeur audio AAC
 HRESULT InitializeAudioEncoder(ComPtr<IMFTransform>& pEncoder, WAVEFORMATEX* pInputFormat);

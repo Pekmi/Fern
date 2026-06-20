@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
+if(POLICY CMP0091)
+    cmake_policy(SET CMP0091 NEW)
+endif()
 project(Fern)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -37,3 +40,7 @@ add_executable(Fern WIN32
     include/fern/isolatedAudioCapture.h)
 
 target_link_libraries(Fern d3d11 dxgi mfplat mfuuid mfreadwrite mmdevapi RuntimeObject shell32 ole32 winmm user32 gdi32 psapi)
+
+if(MSVC)
+    set_property(TARGET Fern PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()

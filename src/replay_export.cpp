@@ -429,11 +429,24 @@ void AsyncSaveWorker(
     }
 
     if (exportStart < 0) {
-        std::cerr << "SAVE: no video keyframe found, export skipped." << std::endl;
-        fern::LogWarning(L"SAVE", L"No video keyframe found; export skipped.");
-        MFShutdown();
-        if (coInitialized) CoUninitialize();
-        return;
+        for (const auto& sample : sortedSamples) {
+            if (sample.streamIndex != 0) continue;
+
+            LONGLONG time = 0;
+            if (TryGetSampleTime(sample, time) && time < exportEndHns) {
+                exportStart = std::max<LONGLONG>(0, time);
+                fern::LogWarning(L"SAVE", L"No video keyframe marker found; exporting from first video sample.");
+                break;
+            }
+        }
+
+        if (exportStart < 0) {
+            std::cerr << "SAVE: no video sample found, export skipped." << std::endl;
+            fern::LogWarning(L"SAVE", L"No video sample found; export skipped.");
+            MFShutdown();
+            if (coInitialized) CoUninitialize();
+            return;
+        }
     }
 
     PrepareAudioTracksForExport(types, audioTrackMetadata, exportStart, exportEndHns);
