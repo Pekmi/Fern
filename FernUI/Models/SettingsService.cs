@@ -30,6 +30,7 @@ namespace FernUI.Models
         public string CloudUrl { get; set; } = "";
         public string CloudApiKey { get; set; } = "";
         public string TargetScreenName { get; set; } = "";
+        public bool IsAiAutoSortEnabled { get; set; } = false;
 
         private readonly string _filePath;
 
@@ -90,6 +91,7 @@ namespace FernUI.Models
                 bool sawCloudUrl = false;
                 bool sawCloudApiKey = false;
                 bool sawTargetScreenName = false;
+                bool sawIsAiAutoSortEnabled = false;
                 string loadedStoragePath = StoragePath;
 
                 foreach (var line in File.ReadAllLines(_filePath))
@@ -175,6 +177,10 @@ namespace FernUI.Models
                             TargetScreenName = value;
                             sawTargetScreenName = true;
                             break;
+                        case "IsAiAutoSortEnabled":
+                            IsAiAutoSortEnabled = ParseBool(value);
+                            sawIsAiAutoSortEnabled = true;
+                            break;
                     }
                 }
 
@@ -185,7 +191,7 @@ namespace FernUI.Models
                 if (!sawHotkey || !sawMicrophoneDeviceId || !sawMicrophoneDeviceName ||
                     !sawVideoCodec || !sawEncoderProfile || !sawRateControl || !sawMaxBitrateMultiplier ||
                     !sawGopSeconds || !sawBFrames || !sawLowLatency || !sawQualityVsSpeed || !sawEncoderIndex ||
-                    !sawCloudUrl || !sawCloudApiKey || !sawTargetScreenName ||
+                    !sawCloudUrl || !sawCloudApiKey || !sawTargetScreenName || !sawIsAiAutoSortEnabled ||
                     !string.Equals(loadedStoragePath, StoragePath, StringComparison.OrdinalIgnoreCase))
                 {
                     Save();
@@ -227,7 +233,8 @@ namespace FernUI.Models
                     $"EncoderIndex={EncoderIndex}",
                     $"CloudUrl={CloudUrl}",
                     $"CloudApiKey={CloudApiKey}",
-                    $"TargetScreenName={TargetScreenName}"
+                    $"TargetScreenName={TargetScreenName}",
+                    $"IsAiAutoSortEnabled={IsAiAutoSortEnabled.ToString().ToLowerInvariant()}"
                 };
                 File.WriteAllLines(_filePath, lines);
             }

@@ -12,6 +12,8 @@ using System.Threading.Tasks;
 using Windows.Storage.Pickers;
 using Windows.System;
 using WinRT.Interop;
+using System.IO.Compression;
+using System.Net.Http;
 
 namespace FernUI.Views
 {
@@ -21,14 +23,14 @@ namespace FernUI.Views
         private DispatcherTimer _microphoneLevelTimer = null!;
         private MicrophoneLevelMeter? _microphoneMeter;
         private IReadOnlyList<MicrophoneDeviceInfo> _microphones = Array.Empty<MicrophoneDeviceInfo>();
-        
+
         public class ScreenInfo
         {
             public string DeviceName { get; set; } = "";
             public string DisplayName { get; set; } = "";
         }
         private IReadOnlyList<ScreenInfo> _screens = Array.Empty<ScreenInfo>();
-        
+
         private double _displayedMicrophoneLevel;
         private bool _isLoading = true;
 
@@ -62,6 +64,7 @@ namespace FernUI.Views
             LowLatencyToggle.IsOn = settings.LowLatency;
             QualityVsSpeedSlider.Value = settings.QualityVsSpeed;
             EncoderIndexSlider.Value = settings.EncoderIndex;
+            AiToggle.IsOn = settings.IsAiAutoSortEnabled;
         }
 
         private void LoadMicrophones()
@@ -125,7 +128,7 @@ namespace FernUI.Views
             try
             {
                 var screens = new List<ScreenInfo>();
-                
+
                 // Add the "Default / Auto" option
                 screens.Add(new ScreenInfo { DeviceName = "", DisplayName = "Automatique (Principal)" });
 
@@ -136,7 +139,7 @@ namespace FernUI.Views
                     IntPtr hMonitor = (IntPtr)display.DisplayId.Value;
                     MONITORINFOEX mi = new MONITORINFOEX();
                     mi.cbSize = Marshal.SizeOf(typeof(MONITORINFOEX));
-                    
+
                     if (GetMonitorInfo(hMonitor, ref mi))
                     {
                         string name = display.IsPrimary ? $"Écran {index} ({mi.szDevice}) - Principal" : $"Écran {index} ({mi.szDevice})";
@@ -148,17 +151,17 @@ namespace FernUI.Views
                         index++;
                     }
                 }
-                
+
                 _screens = screens;
                 ScreenComboBox.ItemsSource = _screens;
-                
+
                 var settings = SettingsService.Instance;
                 var selected = _screens.FirstOrDefault(s => string.Equals(s.DeviceName, settings.TargetScreenName, StringComparison.OrdinalIgnoreCase));
                 ScreenComboBox.SelectedItem = selected ?? _screens[0];
             }
-            catch {}
+            catch { }
         }
-        
+
         private void ScreenComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
             if (_isLoading || ScreenComboBox.SelectedItem is not ScreenInfo selected) return;
@@ -475,9 +478,143 @@ namespace FernUI.Views
 
         [DllImport("user32.dll")]
         private static extern short GetKeyState(int virtualKey);
+        private bool _isAiToggleUpdating = false;
+
+        private async void AiToggle_Toggled(object sender, RoutedEventArgs e)
+        {
+            if (_isLoading || _isAiToggleUpdating) return;
+
+            if (AiToggle.IsOn)
+            {
+                string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                string modelPath = Path.Combine(appData, "PekmisIndustries", "Fern", "Models", "phi-4");
+
+                if (Directory.Exists(modelPath) && File.Exists(Path.Combine(modelPath, "genai_config.json")))
+                {
+                    SettingsService.Instance.IsAiAutoSortEnabled = true;
+                    TriggerSave();
+                    return;
+                }
+
+                _isAiToggleUpdating = true;
+                AiToggle.IsOn = false;
+                _isAiToggleUpdating = false;
+
+                DownloadProgressBar.Value = 0;
+                DownloadStatusText.Text = "Téléchargement : 0 / 3.5 Go";
+
+                var cts = new System.Threading.CancellationTokenSource();
+                var downloadTask = DownloadAiModelAsync(modelPath, cts.Token);
+
+                var result = await AiDownloadDialog.ShowAsync();
+
+                if (result == ContentDialogResult.Primary)
+                {
+                    cts.Cancel();
+                }
+                else
+                {
+                    _isAiToggleUpdating = true;
+                    AiToggle.IsOn = true;
+                    _isAiToggleUpdating = false;
+                    SettingsService.Instance.IsAiAutoSortEnabled = true;
+                    TriggerSave();
+                }
+            }
+            else
+            {
+                SettingsService.Instance.IsAiAutoSortEnabled = false;
+                TriggerSave();
+            }
+        }
+
+        private async Task DownloadAiModelAsync(string modelPath, System.Threading.CancellationToken token)
+        {
+            await Task.Run(async () =>
+            {
+                // URL directe du fichier zip contenant les fichiers ONNX de Phi-4 sur votre VPS
+                string downloadUrl = "http://download.pekmi.me/phi4-onnx-int4.zip";
+                string tempZipPath = Path.Combine(Path.GetTempPath(), "phi4-onnx-int4.zip");
+
+                try
+                {
+                    using var httpClient = new HttpClient();
+                    httpClient.Timeout = System.Threading.Timeout.InfiniteTimeSpan;
+
+                    using var response = await httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, token);
+                    response.EnsureSuccessStatusCode();
+
+                    long? totalBytes = response.Content.Headers.ContentLength;
+
+                    using var contentStream = await response.Content.ReadAsStreamAsync(token);
+                    using var fileStream = new FileStream(tempZipPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true);
+
+                    var buffer = new byte[81920]; // 80 Ko buffer (recommandé pour HttpClient)
+                    long totalRead = 0;
+                    int bytesRead;
+                    DateTime lastUpdate = DateTime.MinValue;
+
+                    while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length, token)) > 0)
+                    {
+                        await fileStream.WriteAsync(buffer, 0, bytesRead, token);
+                        totalRead += bytesRead;
+
+                        if (totalBytes.HasValue)
+                        {
+                            var now = DateTime.Now;
+                            // Ne mettre à jour l'UI que toutes les 200ms pour éviter de bloquer le thread principal
+                            if ((now - lastUpdate).TotalMilliseconds > 200)
+                            {
+                                lastUpdate = now;
+                                double progressPercentage = (double)totalRead / totalBytes.Value * 100;
+                                double downloadedGo = totalRead / (1024.0 * 1024.0 * 1024.0);
+                                double totalGo = totalBytes.Value / (1024.0 * 1024.0 * 1024.0);
+
+                                DispatcherQueue.TryEnqueue(() =>
+                                {
+                                    DownloadProgressBar.Value = progressPercentage;
+                                    DownloadStatusText.Text = $"Téléchargement : {downloadedGo:F2} / {totalGo:F2} Go";
+                                });
+                            }
+                        }
+                    }
+
+                    fileStream.Close();
+
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        DownloadProgressBar.IsIndeterminate = true;
+                        DownloadStatusText.Text = "Extraction des fichiers en cours, veuillez patienter...";
+                    });
+
+                    if (Directory.Exists(modelPath))
+                    {
+                        Directory.Delete(modelPath, true);
+                    }
+                    Directory.CreateDirectory(modelPath);
+                    ZipFile.ExtractToDirectory(tempZipPath, modelPath);
+
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        DownloadProgressBar.IsIndeterminate = false;
+                        AiDownloadDialog.Hide();
+                    });
+                }
+                catch (OperationCanceledException)
+                {
+                }
+                finally
+                {
+                    if (File.Exists(tempZipPath))
+                    {
+                        try { File.Delete(tempZipPath); } catch { }
+                    }
+                }
+            });
+        }
     }
 
-    public class StringFormatConverter : IValueConverter
+    public class StringFormatConverter : Microsoft.UI.Xaml.Data.IValueConverter
     {
         public object Convert(object value, Type targetType, object parameter, string language)
         {
@@ -485,7 +622,7 @@ namespace FernUI.Views
             {
                 return string.Format(format, value);
             }
-            return value?.ToString() ?? "";
+            return value;
         }
 
         public object ConvertBack(object value, Type targetType, object parameter, string language)

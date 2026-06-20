@@ -916,11 +916,11 @@ namespace FernUI.Views
             }
         }
 
-        private void RenameClipFromGallery(ClipModel clip, TextBox textBox, string newTitle)
+        private void RenameClipFromGallery(ClipModel clip, TextBox? textBox, string newTitle)
         {
             if (string.IsNullOrWhiteSpace(newTitle) || newTitle == clip.Title)
             {
-                textBox.Text = clip.Title;
+                if (textBox != null) textBox.Text = clip.Title;
                 return;
             }
 
@@ -931,7 +931,7 @@ namespace FernUI.Views
 
             if (File.Exists(newPath))
             {
-                textBox.Text = clip.Title;
+                if (textBox != null) textBox.Text = clip.Title;
                 return;
             }
 
@@ -948,7 +948,107 @@ namespace FernUI.Views
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"Rename failed: {ex.Message}");
-                textBox.Text = clip.Title;
+                if (textBox != null) textBox.Text = clip.Title;
+            }
+        }
+
+        private async void MenuAnalyzeAi_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is MenuFlyoutItem menuItem && menuItem.DataContext is ClipModel clip)
+            {
+                string originalTitle = clip.Title;
+                string logPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fern_ai_log.txt");
+                File.AppendAllText(logPath, $"\n\n[{DateTime.Now:HH:mm:ss}] --- DEBUT ANALYSE POUR {originalTitle} ---\n");
+
+                clip.Title = "Analyse IA en cours...";
+
+                try
+                {
+                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] Extraction ffmpeg démarrée...\n");
+                    double totalSeconds = clip.DurationValue.TotalSeconds > 5 ? clip.DurationValue.TotalSeconds : 5;
+                    List<string> tempFrames = new List<string>();
+
+                    // 1. Extraire 1 seule frame avec ffmpeg à la 2ème seconde (évite les écrans noirs au milieu)
+                    double targetSeconds = 2.0;
+                    string tempFramePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"frame_{Guid.NewGuid()}.jpg");
+                    
+                    var process = new System.Diagnostics.Process
+                    {
+                        StartInfo = new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = "ffmpeg",
+                            Arguments = $"-ss {targetSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture)} -i \"{clip.FilePath}\" -vframes 1 -q:v 2 \"{tempFramePath}\" -y",
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        }
+                    };
+                    process.Start();
+                    await process.WaitForExitAsync();
+
+                    if (File.Exists(tempFramePath))
+                    {
+                        tempFrames.Add(tempFramePath);
+                    }
+
+                    if (tempFrames.Count == 0)
+                    {
+                        File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] ERREUR: Aucune image extraite.\n");
+                        throw new Exception("Aucune image n'a pu être extraite.");
+                    }
+
+                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] {tempFrames.Count} images extraites. Initialisation du service IA...\n");
+
+                    // 2. Lancer l'analyse avec Phi-4
+                    string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                    string modelPath = System.IO.Path.Combine(appData, "PekmisIndustries", "Fern", "Models", "phi-4");
+
+                    if (!Directory.Exists(modelPath) || !File.Exists(System.IO.Path.Combine(modelPath, "genai_config.json")))
+                    {
+                        File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] ERREUR: Modèle IA introuvable.\n");
+                        throw new Exception("Le modèle IA n'est pas téléchargé.");
+                    }
+
+                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] Appel de AiAnalysisService.GetInstanceAsync...\n");
+                    var aiService = await AiAnalysisService.GetInstanceAsync(modelPath);
+                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] Service IA prêt. Appel de AnalyzeFramesAsync...\n");
+                    
+                    // On construit le prompt pour 1 seule image
+                    string prompt = $"<|user|>\n<|image_1|>\nIdentifie l'action et le jeu sur cette image. Génère un titre très court, accrocheur et punchy (façon miniature YouTube). Ne renvoie QUE LE TITRE, sans aucun guillemet ni ponctuation inutile. Moins de 6 mots.<|end|>\n<|assistant|>\n";
+                    
+                    string generatedTitle = await aiService.AnalyzeFramesAsync(tempFrames.ToArray(), prompt);
+                    
+                    // L'IA Phi-4 a tendance à répéter le prompt dans sa réponse (GetSequence(0) renvoie tout).
+                    // On coupe tout ce qui se trouve avant <|assistant|> si la balise est présente.
+                    if (generatedTitle.Contains("<|assistant|>"))
+                    {
+                        generatedTitle = generatedTitle.Substring(generatedTitle.IndexOf("<|assistant|>") + "<|assistant|>".Length);
+                    }
+                    else if (generatedTitle.Contains(prompt.Trim()))
+                    {
+                        generatedTitle = generatedTitle.Replace(prompt.Trim(), "");
+                    }
+
+                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] Titre généré : {generatedTitle}\n");
+
+                    // 3. Renommer le fichier avec le nouveau titre
+                    string safeTitle = generatedTitle.Replace("\"", "").Replace("*", "").Replace("\n", " ").Trim();
+                    safeTitle = string.Join(" ", safeTitle.Split(System.IO.Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
+                    
+                    RenameClipFromGallery(clip, null, safeTitle);
+
+                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] Nettoyage terminé. Succès.\n");
+                    // 4. Nettoyer les images temporaires
+                    foreach (var path in tempFrames)
+                    {
+                        if (File.Exists(path)) File.Delete(path);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    File.AppendAllText(logPath, $"[{DateTime.Now:HH:mm:ss}] EXCEPTION UI : {ex}\n");
+                    System.Diagnostics.Debug.WriteLine($"Erreur IA : {ex.Message}");
+                    clip.Title = originalTitle;
+                }
             }
         }
     }

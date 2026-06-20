@@ -11,7 +11,8 @@
         <local:StringFormatConverter x:Key="StringFormatConverter"/>
     </Page.Resources>
 
-    <ScrollViewer Padding="32">
+    <Grid>
+        <ScrollViewer Padding="32">
         <Grid HorizontalAlignment="Stretch" ColumnSpacing="24" RowSpacing="24">
             <Grid.ChildrenTransitions>
                 <TransitionCollection>
@@ -225,8 +226,8 @@
                 <TextBlock Text="Intelligence Artificielle" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,24,0,12"/>
                 <Border Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="12" Padding="24" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <StackPanel Spacing="12">
-                        <ToggleSwitch Header="Tri Auto (Modèle Local)" IsOn="True"/>
-                        <TextBlock Text="Analyse les clips pour détecter les moments clés automatiquement." Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                        <ToggleSwitch x:Name="AiToggle" Header="Tri Auto (Modèle Local)" Toggled="AiToggle_Toggled"/>
+                        <TextBlock Text="Analyse les clips pour détecter les moments clés automatiquement. (Nécessite le téléchargement d'un modèle d'IA local ~3.5 Go)" Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
                     </StackPanel>
                 </Border>
                 <!-- SECTION ECRAN (Sous IA) -->
@@ -244,4 +245,16 @@
             </StackPanel>
         </Grid>
     </ScrollViewer>
+
+    <ContentDialog x:Name="AiDownloadDialog"
+                   Title="Téléchargement du modèle IA (Phi-4)"
+                   PrimaryButtonText="Annuler"
+                   DefaultButton="None">
+        <StackPanel Spacing="12" Width="400">
+            <TextBlock Text="Fern télécharge le modèle Microsoft Phi-4 Multimodal Instruct (6B, INT4). Cela prendra un moment en fonction de votre connexion." TextWrapping="Wrap" />
+            <TextBlock x:Name="DownloadStatusText" Text="Téléchargement : 0 / 3.5 Go" Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+            <ProgressBar x:Name="DownloadProgressBar" Minimum="0" Maximum="100" Value="0" IsIndeterminate="False" Height="8"/>
+        </StackPanel>
+        </ContentDialog>
+    </Grid>
 </Page>

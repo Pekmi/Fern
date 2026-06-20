@@ -26,6 +26,16 @@
                     <CompositeTransform/>
                 </Grid.RenderTransform>
 
+                <Grid.ContextFlyout>
+                    <MenuFlyout>
+                        <MenuFlyoutItem Text="Générer un titre avec l'IA" Click="MenuAnalyzeAi_Click">
+                            <MenuFlyoutItem.Icon>
+                                <FontIcon Glyph="&#xE945;"/> <!-- Magic wand/Sparkle icon -->
+                            </MenuFlyoutItem.Icon>
+                        </MenuFlyoutItem>
+                    </MenuFlyout>
+                </Grid.ContextFlyout>
+
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
