@@ -29,6 +29,7 @@ namespace FernUI.Models
         public int EncoderIndex { get; set; } = 0;
         public string CloudUrl { get; set; } = "";
         public string CloudApiKey { get; set; } = "";
+        public string TargetScreenName { get; set; } = "";
 
         private readonly string _filePath;
 
@@ -88,6 +89,7 @@ namespace FernUI.Models
                 bool sawEncoderIndex = false;
                 bool sawCloudUrl = false;
                 bool sawCloudApiKey = false;
+                bool sawTargetScreenName = false;
                 string loadedStoragePath = StoragePath;
 
                 foreach (var line in File.ReadAllLines(_filePath))
@@ -169,6 +171,10 @@ namespace FernUI.Models
                             CloudApiKey = value;
                             sawCloudApiKey = true;
                             break;
+                        case "TargetScreenName":
+                            TargetScreenName = value;
+                            sawTargetScreenName = true;
+                            break;
                     }
                 }
 
@@ -179,7 +185,7 @@ namespace FernUI.Models
                 if (!sawHotkey || !sawMicrophoneDeviceId || !sawMicrophoneDeviceName ||
                     !sawVideoCodec || !sawEncoderProfile || !sawRateControl || !sawMaxBitrateMultiplier ||
                     !sawGopSeconds || !sawBFrames || !sawLowLatency || !sawQualityVsSpeed || !sawEncoderIndex ||
-                    !sawCloudUrl || !sawCloudApiKey ||
+                    !sawCloudUrl || !sawCloudApiKey || !sawTargetScreenName ||
                     !string.Equals(loadedStoragePath, StoragePath, StringComparison.OrdinalIgnoreCase))
                 {
                     Save();
@@ -220,7 +226,8 @@ namespace FernUI.Models
                     $"QualityVsSpeed={QualityVsSpeed}",
                     $"EncoderIndex={EncoderIndex}",
                     $"CloudUrl={CloudUrl}",
-                    $"CloudApiKey={CloudApiKey}"
+                    $"CloudApiKey={CloudApiKey}",
+                    $"TargetScreenName={TargetScreenName}"
                 };
                 File.WriteAllLines(_filePath, lines);
             }

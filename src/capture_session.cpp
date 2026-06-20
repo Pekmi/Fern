@@ -273,7 +273,7 @@ bool TryCreateCopyTexture(ID3D11Device* device, UINT width, UINT height, ComPtr<
     return true;
 }
 
-bool TryCreateDesktopCaptureTarget(DesktopCaptureTarget& target) {
+bool TryCreateDesktopCaptureTarget(DesktopCaptureTarget& target, const std::wstring& preferredScreen) {
     target = {};
 
     auto factory = getFactory1();
@@ -319,11 +319,17 @@ bool TryCreateDesktopCaptureTarget(DesktopCaptureTarget& target) {
                 fern::LogInfo(L"DXGI", stream.str());
             }
 
+            DXGI_OUTPUT_DESC outputDesc{};
+            output->GetDesc(&outputDesc);
+            
+            // Si un écran préféré est spécifié et que ce n'est pas celui-ci, on ignore
+            if (!preferredScreen.empty() && preferredScreen != outputDesc.DeviceName) {
+                continue;
+            }
+
             ComPtr<IDXGIOutputDuplication> duplication;
             hr = output->DuplicateOutput(d3d.device.Get(), &duplication);
             if (SUCCEEDED(hr) && duplication) {
-                DXGI_OUTPUT_DESC outputDesc{};
-                output->GetDesc(&outputDesc);
                 duplication->GetDesc(&target.duplicationDesc);
                 target.d3d = d3d;
                 target.duplication = duplication;
@@ -337,8 +343,6 @@ bool TryCreateDesktopCaptureTarget(DesktopCaptureTarget& target) {
                 return true;
             }
 
-            DXGI_OUTPUT_DESC outputDesc{};
-            output->GetDesc(&outputDesc);
             std::wcerr << L"DXGI: DuplicateOutput failed for " << outputDesc.DeviceName
                        << L" 0x" << std::hex << hr << std::dec << std::endl;
             fern::LogHResult(
@@ -500,7 +504,7 @@ bool RebuildVideoPipeline(
     ComPtr<ID3D11Texture2D>& softwareStagingTexture,
     VideoEncoderRuntime& videoRuntime) {
     DesktopCaptureTarget rebuiltTarget;
-    if (!TryCreateDesktopCaptureTarget(rebuiltTarget)) {
+    if (!TryCreateDesktopCaptureTarget(rebuiltTarget, settings.targetScreenName)) {
         std::cerr << "VIDEO: desktop duplication rebuild failed." << std::endl;
         fern::LogError(L"VIDEO", L"Desktop duplication rebuild failed.");
         return false;
@@ -650,15 +654,22 @@ void StartAsyncSave(
 void RunCaptureSession(const Settings& settings) {
     fern::LogInfo(L"SESSION", L"Capture session starting.");
     DesktopCaptureTarget captureTarget;
-    if (!TryCreateDesktopCaptureTarget(captureTarget)) {
-        std::cerr << "DXGI: DuplicateOutput failed." << std::endl;
-        fern::LogError(L"SESSION", L"Capture session stopped: desktop duplication unavailable.");
-        return;
+    if (!TryCreateDesktopCaptureTarget(captureTarget, settings.targetScreenName)) {
+        // Fallback si l'écran préféré n'est pas trouvé
+        if (!settings.targetScreenName.empty() && TryCreateDesktopCaptureTarget(captureTarget, L"")) {
+            fern::LogInfo(L"SESSION", L"Preferred screen not found, fallback to default screen.");
+        } else {
+            std::cerr << "DXGI: DuplicateOutput failed." << std::endl;
+            fern::LogError(L"SESSION", L"Capture session stopped: desktop duplication unavailable.");
+            return;
+        }
     }
 
     D3D11Context d3d = captureTarget.d3d;
     auto outputDuplication = captureTarget.duplication;
     DXGI_OUTDUPL_DESC duplicationDesc = captureTarget.duplicationDesc;
+    
+    fern::ShowRecordingStartFrame(captureTarget.desktopRect);
 
     auto dxgiDeviceManager = CreateDXGIDeviceManager(d3d.device.Get());
     if (!dxgiDeviceManager.deviceManager) {

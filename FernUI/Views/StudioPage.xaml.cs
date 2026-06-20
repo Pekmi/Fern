@@ -49,6 +49,15 @@ namespace FernUI.Views
         private bool _isUpdatingStudioVolumeControls;
         private bool _isUpdatingMasterVolumeControls;
         private bool _isNormalizingLufs;
+        private bool IsNormalizingLufs
+        {
+            get => _isNormalizingLufs;
+            set
+            {
+                _isNormalizingLufs = value;
+                AudioProcessingProgress.Visibility = value ? Visibility.Visible : Visibility.Collapsed;
+            }
+        }
         private bool _isMuted;
         private bool _isTearingDownStudioSession;
         private TypedEventHandler<MediaPlaybackItem, IVectorChangedEventArgs>? _playbackItemAudioTracksChangedHandler;
@@ -213,7 +222,7 @@ namespace FernUI.Views
             if (e.Parameter is ClipModel clip)
             {
                 _selectedClip = clip;
-                ClipTitleTextBlock.Text = _selectedClip.Title;
+                ClipTitleTextBox.Text = _selectedClip.Title;
                 DurationText.Text = string.Join("   ", new[] { _selectedClip.Date, _selectedClip.Duration }
                     .Where(value => !string.IsNullOrWhiteSpace(value)));
                 SetStudioVolumePercent(100, false);
@@ -1757,7 +1766,7 @@ namespace FernUI.Views
             string sourcePath = _selectedClip.FilePath;
             var tracks = AudioTracks.ToList();
             StudioLufsAnalysis analysis = _lastLufsAnalysis;
-            _isNormalizingLufs = true;
+            IsNormalizingLufs = true;
             LufsAutoAdjustButton.IsEnabled = false;
             LufsAutoAdjustButton.Content = "Ajustement...";
             LufsWarningText.Text = "Correction LUFS...";
@@ -1782,7 +1791,7 @@ namespace FernUI.Views
             }
             finally
             {
-                _isNormalizingLufs = false;
+                IsNormalizingLufs = false;
                 LufsAutoAdjustButton.IsEnabled = true;
                 LufsAutoAdjustButton.Content = "Ajuster";
             }
@@ -1799,7 +1808,7 @@ namespace FernUI.Views
 
             if (EqualizeTracksToggle.IsOn)
             {
-                _isNormalizingLufs = true;
+                IsNormalizingLufs = true;
                 EqualizeTracksToggle.IsEnabled = false;
                 try
                 {
@@ -1818,6 +1827,23 @@ namespace FernUI.Views
                             track.LufsGain = gain;
                         }
                     }
+
+                    if (tracksCopy.Count > 1)
+                    {
+                        var mixAnalysis = await StudioLufsService.AnalyzeWithGainsAsync(_selectedClip.FilePath, tracksCopy, gains, CancellationToken.None);
+                        if (mixAnalysis != null)
+                        {
+                            double mixCorrection = Math.Pow(10.0, (-14.0 - mixAnalysis.IntegratedLufs) / 20.0);
+                            if (double.IsFinite(mixCorrection) && mixCorrection > 0)
+                            {
+                                foreach (var track in tracksCopy)
+                                {
+                                    gains[track.AudioIndex] *= mixCorrection;
+                                    track.LufsGain = gains[track.AudioIndex];
+                                }
+                            }
+                        }
+                    }
                     
                     await StudioLufsService.ApplyTrackGainsAsync(_selectedClip.FilePath, tracksCopy, gains, CancellationToken.None);
                     
@@ -1833,7 +1859,7 @@ namespace FernUI.Views
                 }
                 finally
                 {
-                    _isNormalizingLufs = false;
+                    IsNormalizingLufs = false;
                     EqualizeTracksToggle.IsEnabled = true;
                 }
             }
@@ -1851,19 +1877,36 @@ namespace FernUI.Views
                         track.LufsGain = 1.0;
                         changed = true;
                     }
+                    else
+                    {
+                        undoGains[track.AudioIndex] = 1.0;
+                    }
                 }
                 
                 if (changed)
                 {
-                    _isNormalizingLufs = true;
+                    IsNormalizingLufs = true;
                     EqualizeTracksToggle.IsEnabled = false;
                     try
                     {
                         ReleaseMediaForSourceRewrite();
                         
+                        var mixAnalysis = await StudioLufsService.AnalyzeWithGainsAsync(_selectedClip.FilePath, tracksCopy, undoGains, CancellationToken.None);
+                        if (mixAnalysis != null)
+                        {
+                            double mixCorrection = Math.Pow(10.0, (-14.0 - mixAnalysis.IntegratedLufs) / 20.0);
+                            if (double.IsFinite(mixCorrection) && mixCorrection > 0)
+                            {
+                                foreach (var track in tracksCopy)
+                                {
+                                    undoGains[track.AudioIndex] *= mixCorrection;
+                                }
+                            }
+                        }
+                        
                         await StudioLufsService.ApplyTrackGainsAsync(_selectedClip.FilePath, tracksCopy, undoGains, CancellationToken.None);
                         
-                        string packagePath = Path.ChangeExtension(_selectedClip.FilePath, ".fern");
+                        string packagePath = System.IO.Path.ChangeExtension(_selectedClip.FilePath, ".fern");
                         if (File.Exists(packagePath)) SaveAudioVolumesToFernPackage(packagePath, tracksCopy);
                         
                         InitializeMedia(_selectedClip.FilePath);
@@ -1875,7 +1918,7 @@ namespace FernUI.Views
                     }
                     finally
                     {
-                        _isNormalizingLufs = false;
+                        IsNormalizingLufs = false;
                         EqualizeTracksToggle.IsEnabled = true;
                     }
                 }
@@ -2096,6 +2139,61 @@ namespace FernUI.Views
                 ReleaseStudioSessionResources();
                 Frame.GoBack();
                 Frame.ForwardStack.Clear();
+            }
+        }
+
+        private void ClipTitleTextBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            RenameClipFromStudio(ClipTitleTextBox.Text);
+        }
+
+        private void ClipTitleTextBox_KeyDown(object sender, KeyRoutedEventArgs e)
+        {
+            if (e.Key == Windows.System.VirtualKey.Enter)
+            {
+                RenameClipFromStudio(ClipTitleTextBox.Text);
+                this.Focus(FocusState.Programmatic);
+            }
+        }
+
+        private void RenameClipFromStudio(string newTitle)
+        {
+            if (_selectedClip == null || string.IsNullOrWhiteSpace(newTitle) || newTitle == _selectedClip.Title)
+            {
+                if (_selectedClip != null) ClipTitleTextBox.Text = _selectedClip.Title;
+                return;
+            }
+
+            string oldPath = _selectedClip.FilePath;
+            string dir = System.IO.Path.GetDirectoryName(oldPath) ?? string.Empty;
+            string ext = System.IO.Path.GetExtension(oldPath);
+            string newPath = System.IO.Path.Combine(dir, newTitle + ext);
+
+            if (File.Exists(newPath))
+            {
+                ClipTitleTextBox.Text = _selectedClip.Title;
+                return;
+            }
+
+            try
+            {
+                ReleaseMediaForSourceRewrite();
+
+                File.Move(oldPath, newPath);
+                string oldFern = System.IO.Path.ChangeExtension(oldPath, ".fern");
+                string newFern = System.IO.Path.ChangeExtension(newPath, ".fern");
+                if (File.Exists(oldFern)) File.Move(oldFern, newFern);
+
+                _selectedClip.FilePath = newPath;
+                _selectedClip.Title = newTitle;
+
+                InitializeMedia(newPath);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Rename failed: {ex.Message}");
+                ClipTitleTextBox.Text = _selectedClip.Title;
+                InitializeMedia(oldPath);
             }
         }
     }

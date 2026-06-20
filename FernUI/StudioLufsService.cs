@@ -237,6 +237,81 @@ namespace FernUI
             };
         }
 
+        public static async Task<StudioLufsAnalysis?> AnalyzeWithGainsAsync(
+            string sourcePath,
+            IReadOnlyList<AudioTrack> audioTracks,
+            Dictionary<int, double> trackGains,
+            CancellationToken cancellationToken)
+        {
+            if (!File.Exists(sourcePath)) return null;
+
+            List<AudioTrack> measuredTracks = audioTracks
+                .Where(track => track.AudioIndex >= 0)
+                .OrderBy(track => track.AudioIndex)
+                .ToList();
+
+            if (measuredTracks.Count == 0) return null;
+
+            using var process = new Process();
+            process.StartInfo = new ProcessStartInfo
+            {
+                FileName = "ffmpeg",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+
+            foreach (string argument in BuildFfmpegArgumentsWithGains(sourcePath, measuredTracks, trackGains))
+            {
+                process.StartInfo.ArgumentList.Add(argument);
+            }
+
+            try
+            {
+                process.Start();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"Studio LUFS: ffmpeg indisponible: {ex.Message}");
+                return null;
+            }
+
+            Task<string> errorTask = process.StandardError.ReadToEndAsync();
+            Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
+
+            try
+            {
+                await process.WaitForExitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                TryKill(process);
+                throw;
+            }
+
+            await outputTask;
+            string errorOutput = await errorTask;
+
+            if (process.ExitCode != 0)
+            {
+                Debug.WriteLine($"Studio LUFS: analyse ffmpeg echouee: {Tail(errorOutput)}");
+                return null;
+            }
+
+            if (!TryParseInputLufs(errorOutput, out double integratedLufs))
+            {
+                Debug.WriteLine("Studio LUFS: resultat loudnorm illisible.");
+                return null;
+            }
+
+            return new StudioLufsAnalysis
+            {
+                IntegratedLufs = integratedLufs,
+                TargetLufs = TargetLufs
+            };
+        }
+
         private static IEnumerable<string> BuildNormalizeVideoArguments(
             string sourcePath,
             string outputPath,
@@ -432,6 +507,51 @@ namespace FernUI
             yield return sourcePath;
             yield return "-filter_complex";
             yield return BuildLoudnormFilter(audioTracks, masterGain);
+            yield return "-map";
+            yield return "[loudout]";
+            yield return "-f";
+            yield return "null";
+            yield return "-";
+        }
+
+        private static IEnumerable<string> BuildFfmpegArgumentsWithGains(
+            string sourcePath,
+            IReadOnlyList<AudioTrack> audioTracks,
+            Dictionary<int, double> trackGains)
+        {
+            yield return "-hide_banner";
+            yield return "-nostats";
+            yield return "-i";
+            yield return sourcePath;
+            yield return "-filter_complex";
+
+            var filter = new StringBuilder();
+            for (int i = 0; i < audioTracks.Count; i++)
+            {
+                double gain = trackGains.TryGetValue(audioTracks[i].AudioIndex, out double g) ? g : 1.0;
+                string volume = gain.ToString("0.######", CultureInfo.InvariantCulture);
+                filter.Append(CultureInfo.InvariantCulture, $"[0:a:{audioTracks[i].AudioIndex}]volume={volume}[a{i}];");
+            }
+
+            if (audioTracks.Count == 1)
+            {
+                filter.Append("[a0]anull[mix];");
+            }
+            else
+            {
+                for (int i = 0; i < audioTracks.Count; i++)
+                {
+                    filter.Append(CultureInfo.InvariantCulture, $"[a{i}]");
+                }
+
+                filter.Append(CultureInfo.InvariantCulture,
+                    $"amix=inputs={audioTracks.Count}:duration=longest:dropout_transition=0:normalize=0[mix];");
+            }
+
+            filter.Append(CultureInfo.InvariantCulture,
+                $"[mix]loudnorm=I={TargetLufs:0.##}:TP={TargetTruePeakDb:0.##}:LRA={TargetLra:0.##}:print_format=json[loudout]");
+
+            yield return filter.ToString();
             yield return "-map";
             yield return "[loudout]";
             yield return "-f";

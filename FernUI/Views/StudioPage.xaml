@@ -31,8 +31,7 @@
                     Style="{ThemeResource NavigationBackButtonNormalStyle}" 
                     ToolTipService.ToolTip="Retour à la Galerie"
                     Margin="0,0,16,0"/>
-            <TextBlock x:Name="ClipTitleTextBlock" Text="Nom du Clip" 
-                       Style="{ThemeResource TitleTextBlockStyle}" FontWeight="Bold"/>
+            <TextBox x:Name="ClipTitleTextBox" Text="Nom du Clip" FontSize="28" FontWeight="Bold" BorderThickness="0" Background="Transparent" Padding="0" VerticalAlignment="Center" Margin="0,0,16,0" LostFocus="ClipTitleTextBox_LostFocus" KeyDown="ClipTitleTextBox_KeyDown"/>
         </StackPanel>
 
         <Grid x:Name="WorkspaceGrid" Grid.Row="1">
@@ -206,10 +205,18 @@
                                         Value="0"
                                         StepFrequency="0.1"
                                         ValueChanged="MasterVolumeSlider_ValueChanged"/>
-                                <ToggleSwitch x:Name="EqualizeTracksToggle"
-                                              Header="Égaliser les pistes"
-                                              Margin="0,16,0,0"
-                                              Toggled="EqualizeTracksToggle_Toggled"/>
+                                <Grid Margin="0,16,0,0" VerticalAlignment="Center">
+                                    <TextBlock Text="Égaliser les pistes" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                    <ToggleSwitch x:Name="EqualizeTracksToggle"
+                                                  HorizontalAlignment="Right"
+                                                  VerticalAlignment="Center"
+                                                  OnContent="{x:Null}"
+                                                  OffContent="{x:Null}"
+                                                  MinWidth="0"
+                                                  Margin="0"
+                                                  Toggled="EqualizeTracksToggle_Toggled"/>
+                                </Grid>
+                                <ProgressBar x:Name="AudioProcessingProgress" IsIndeterminate="True" Visibility="Collapsed" Margin="0,16,0,0"/>
                             </StackPanel>
                         </StackPanel>
                         

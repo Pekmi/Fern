@@ -21,6 +21,14 @@ namespace FernUI.Views
         private DispatcherTimer _microphoneLevelTimer = null!;
         private MicrophoneLevelMeter? _microphoneMeter;
         private IReadOnlyList<MicrophoneDeviceInfo> _microphones = Array.Empty<MicrophoneDeviceInfo>();
+        
+        public class ScreenInfo
+        {
+            public string DeviceName { get; set; } = "";
+            public string DisplayName { get; set; } = "";
+        }
+        private IReadOnlyList<ScreenInfo> _screens = Array.Empty<ScreenInfo>();
+        
         private double _displayedMicrophoneLevel;
         private bool _isLoading = true;
 
@@ -29,6 +37,7 @@ namespace FernUI.Views
             InitializeComponent();
             LoadSettings();
             LoadMicrophones();
+            LoadScreens();
             SetupAutoSave();
             SetupMicrophoneMeter();
             Unloaded += SettingsPage_Unloaded;
@@ -89,6 +98,72 @@ namespace FernUI.Views
                 MicrophoneComboBox.ItemsSource = _microphones;
                 MicrophoneStatusText.Text = $"Liste des micros indisponible: {ex.Message}";
             }
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct MONITORINFOEX
+        {
+            public int cbSize;
+            public int rcMonitor_left;
+            public int rcMonitor_top;
+            public int rcMonitor_right;
+            public int rcMonitor_bottom;
+            public int rcWork_left;
+            public int rcWork_top;
+            public int rcWork_right;
+            public int rcWork_bottom;
+            public uint dwFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+            public string szDevice;
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFOEX lpmi);
+
+        private void LoadScreens()
+        {
+            try
+            {
+                var screens = new List<ScreenInfo>();
+                
+                // Add the "Default / Auto" option
+                screens.Add(new ScreenInfo { DeviceName = "", DisplayName = "Automatique (Principal)" });
+
+                var displays = Microsoft.UI.Windowing.DisplayArea.FindAll();
+                int index = 1;
+                foreach (var display in displays)
+                {
+                    IntPtr hMonitor = (IntPtr)display.DisplayId.Value;
+                    MONITORINFOEX mi = new MONITORINFOEX();
+                    mi.cbSize = Marshal.SizeOf(typeof(MONITORINFOEX));
+                    
+                    if (GetMonitorInfo(hMonitor, ref mi))
+                    {
+                        string name = display.IsPrimary ? $"Écran {index} ({mi.szDevice}) - Principal" : $"Écran {index} ({mi.szDevice})";
+                        screens.Add(new ScreenInfo
+                        {
+                            DeviceName = mi.szDevice,
+                            DisplayName = name
+                        });
+                        index++;
+                    }
+                }
+                
+                _screens = screens;
+                ScreenComboBox.ItemsSource = _screens;
+                
+                var settings = SettingsService.Instance;
+                var selected = _screens.FirstOrDefault(s => string.Equals(s.DeviceName, settings.TargetScreenName, StringComparison.OrdinalIgnoreCase));
+                ScreenComboBox.SelectedItem = selected ?? _screens[0];
+            }
+            catch {}
+        }
+        
+        private void ScreenComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_isLoading || ScreenComboBox.SelectedItem is not ScreenInfo selected) return;
+            SettingsService.Instance.TargetScreenName = selected.DeviceName;
+            TriggerSave();
         }
 
         private void SetupAutoSave()

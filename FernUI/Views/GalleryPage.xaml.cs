@@ -877,11 +877,6 @@ namespace FernUI.Views
 
         private void CardRoot_PointerEntered(object sender, PointerRoutedEventArgs e)
         {
-            if (sender is FrameworkElement card)
-            {
-                int hoverIndex = _displayedCards.IndexOf(card);
-                if (hoverIndex != -1) UpdateSelection(hoverIndex);
-            }
         }
 
         private void CardRoot_PointerExited(object sender, PointerRoutedEventArgs e)
@@ -893,6 +888,67 @@ namespace FernUI.Views
             if (sender is FrameworkElement card && card.DataContext is ClipModel clip)
             {
                 Frame.Navigate(typeof(StudioPage), clip);
+            }
+        }
+
+        private void TitleTextBox_Tapped(object sender, TappedRoutedEventArgs e)
+        {
+            e.Handled = true;
+        }
+
+        private void TitleTextBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (sender is TextBox textBox && textBox.DataContext is ClipModel clip)
+            {
+                RenameClipFromGallery(clip, textBox, textBox.Text);
+            }
+        }
+
+        private void TitleTextBox_KeyDown(object sender, KeyRoutedEventArgs e)
+        {
+            if (e.Key == Windows.System.VirtualKey.Enter)
+            {
+                if (sender is TextBox textBox && textBox.DataContext is ClipModel clip)
+                {
+                    RenameClipFromGallery(clip, textBox, textBox.Text);
+                    this.Focus(FocusState.Programmatic);
+                }
+            }
+        }
+
+        private void RenameClipFromGallery(ClipModel clip, TextBox textBox, string newTitle)
+        {
+            if (string.IsNullOrWhiteSpace(newTitle) || newTitle == clip.Title)
+            {
+                textBox.Text = clip.Title;
+                return;
+            }
+
+            string oldPath = clip.FilePath;
+            string dir = System.IO.Path.GetDirectoryName(oldPath) ?? string.Empty;
+            string ext = System.IO.Path.GetExtension(oldPath);
+            string newPath = System.IO.Path.Combine(dir, newTitle + ext);
+
+            if (File.Exists(newPath))
+            {
+                textBox.Text = clip.Title;
+                return;
+            }
+
+            try
+            {
+                File.Move(oldPath, newPath);
+                string oldFern = System.IO.Path.ChangeExtension(oldPath, ".fern");
+                string newFern = System.IO.Path.ChangeExtension(newPath, ".fern");
+                if (File.Exists(oldFern)) File.Move(oldFern, newFern);
+
+                clip.FilePath = newPath;
+                clip.Title = newTitle;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Rename failed: {ex.Message}");
+                textBox.Text = clip.Title;
             }
         }
     }

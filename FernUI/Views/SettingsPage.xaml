@@ -189,8 +189,9 @@
                                    TextWrapping="Wrap"/>
                     </StackPanel>
                 </Border>
-            </StackPanel>
 
+
+            </StackPanel>
             <!-- SECTION RACCOURCIS & CHEMINS (Colonne Droite, Haut) -->
             <StackPanel Grid.Row="0" Grid.Column="1">
                 <TextBlock Text="Raccourcis &amp; Chemins" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,0,0,12"/>
@@ -226,6 +227,18 @@
                     <StackPanel Spacing="12">
                         <ToggleSwitch Header="Tri Auto (Modèle Local)" IsOn="True"/>
                         <TextBlock Text="Analyse les clips pour détecter les moments clés automatiquement." Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+                <!-- SECTION ECRAN (Sous IA) -->
+                <TextBlock Text="Écran Cible" Style="{ThemeResource BodyStrongTextBlockStyle}" Margin="0,24,0,12"/>
+                <Border Background="{ThemeResource LayerFillColorDefaultBrush}" CornerRadius="12" Padding="24" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="Écran à enregistrer" Margin="0,0,0,4"/>
+                        <ComboBox x:Name="ScreenComboBox"
+                                  HorizontalAlignment="Stretch"
+                                  DisplayMemberPath="DisplayName"
+                                  SelectionChanged="ScreenComboBox_SelectionChanged"/>
+                        <TextBlock Text="Laissez vide pour l'écran principal par défaut." Style="{ThemeResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                     </StackPanel>
                 </Border>
             </StackPanel>

@@ -90,6 +90,7 @@ void Settings::Load(bool log) {
     lowLatency = false;
     qualityVsSpeed = 70;
     encoderIndex = 0;
+    targetScreenName.clear();
 
     // 2. Tenter de charger le fichier
     auto path = GetSettingsPath();
@@ -124,6 +125,7 @@ void Settings::Load(bool log) {
     bool sawLowLatency = false;
     bool sawQualityVsSpeed = false;
     bool sawEncoderIndex = false;
+    bool sawTargetScreenName = false;
     std::wstring loadedStoragePath = storagePath;
     while (std::getline(file, line)) {
         size_t pos = line.find(L'=');
@@ -189,6 +191,10 @@ void Settings::Load(bool log) {
                     encoderIndex = std::stoi(value);
                     sawEncoderIndex = true;
                 }
+                else if (key == L"TargetScreenName") {
+                    targetScreenName = value;
+                    sawTargetScreenName = true;
+                }
             } catch (...) {
                 std::wcerr << L"SETTINGS: Erreur de parsing pour " << key << std::endl;
             }
@@ -213,7 +219,7 @@ void Settings::Load(bool log) {
     if (!sawHotkey || !sawMicrophoneDeviceId || !sawMicrophoneDeviceName ||
         !sawVideoCodec || !sawEncoderProfile || !sawRateControl || !sawMaxBitrateMultiplier ||
         !sawGopSeconds || !sawBFrames || !sawLowLatency || !sawQualityVsSpeed || !sawEncoderIndex ||
-        ToLower(loadedStoragePath) != ToLower(storagePath)) {
+        !sawTargetScreenName || ToLower(loadedStoragePath) != ToLower(storagePath)) {
         Save();
     }
 
@@ -247,6 +253,7 @@ void Settings::Save() {
         file << L"LowLatency=" << BoolText(lowLatency) << L"\n";
         file << L"QualityVsSpeed=" << std::clamp(qualityVsSpeed, 0, 100) << L"\n";
         file << L"EncoderIndex=" << std::max(0, encoderIndex) << L"\n";
+        file << L"TargetScreenName=" << targetScreenName << L"\n";
         file.close();
     } else {
         std::wcerr << L"SETTINGS ERROR: Impossible d'ouvrir en ecriture: " << path.wstring() << std::endl;

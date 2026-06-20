@@ -19,6 +19,7 @@ struct Settings {
     bool lowLatency = false;
     int qualityVsSpeed = 70;
     int encoderIndex = 0;
+    std::wstring targetScreenName;
 
     void Load(bool log = true);
     void Save();
