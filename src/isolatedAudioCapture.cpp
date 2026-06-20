@@ -31,6 +31,7 @@ constexpr LONGLONG kRealtimeSilenceLagHns = 2000000LL;
 constexpr LONGLONG kInitialTimestampTrustHns = 5000000LL;
 constexpr short kAudibleSampleThreshold = 512;
 constexpr LONGLONG kActivityMergeGapHns = 500000LL;
+constexpr LONGLONG kActivityRetentionPaddingHns = 5 * fern::HnsPerSecond;
 
 void SetPcm16StereoFormat(WAVEFORMATEXTENSIBLE& format, UINT32 sampleRate) {
     std::memset(&format, 0, sizeof(format));
@@ -101,6 +102,7 @@ IsolatedAudioCapture::IsolatedAudioCapture(DWORD targetPid)
       m_timelineFramesWritten(0),
       m_framesSent(0),
       m_pendingLeadingSilenceFrames(0),
+      m_retainedHistoryHns(0),
       m_hasAlignedFirstPacket(false) {
     std::memset(&m_mixFormat, 0, sizeof(m_mixFormat));
 }
@@ -115,6 +117,7 @@ IsolatedAudioCapture::IsolatedAudioCapture(std::wstring captureDeviceId)
       m_timelineFramesWritten(0),
       m_framesSent(0),
       m_pendingLeadingSilenceFrames(0),
+      m_retainedHistoryHns(0),
       m_hasAlignedFirstPacket(false) {
     std::memset(&m_mixFormat, 0, sizeof(m_mixFormat));
 }
@@ -130,6 +133,7 @@ void IsolatedAudioCapture::SetStartTime(UINT64 rawQpc, LONGLONG timelineOffsetHn
     m_activityRanges.clear();
     const LONGLONG offsetHns = std::max<LONGLONG>(0, timelineOffsetHns);
     const LONGLONG retainedHns = std::max<LONGLONG>(0, retainedHistoryHns);
+    m_retainedHistoryHns = retainedHns;
     const LONGLONG leadingSilenceHns = std::min(offsetHns, retainedHns);
     const UINT64 startFrame = HnsToFrame(offsetHns - leadingSilenceHns);
     const UINT64 offsetFrame = std::max(startFrame, HnsToFrame(offsetHns));
@@ -472,11 +476,39 @@ void IsolatedAudioCapture::AddActivityRangeLocked(UINT64 startFrame, UINT64 fram
         if (startHns <= lastEndHns + kActivityMergeGapHns) {
             const LONGLONG newEndHns = std::max(lastEndHns, startHns + durationHns);
             last.durationHns = std::max<LONGLONG>(1, newEndHns - last.startHns);
+            PruneActivityRangesLocked(newEndHns);
             return;
         }
     }
 
     m_activityRanges.push_back({ startHns, durationHns });
+    PruneActivityRangesLocked(startHns + durationHns);
+}
+
+void IsolatedAudioCapture::PruneActivityRangesLocked(LONGLONG latestHns) {
+    if (m_retainedHistoryHns <= 0 || latestHns <= 0 || m_activityRanges.empty()) return;
+
+    const LONGLONG retainFrom = std::max<LONGLONG>(
+        0,
+        latestHns - m_retainedHistoryHns - kActivityRetentionPaddingHns);
+
+    auto removeEnd = m_activityRanges.begin();
+    while (removeEnd != m_activityRanges.end()) {
+        const LONGLONG rangeEnd = removeEnd->startHns + removeEnd->durationHns;
+        if (rangeEnd > retainFrom) break;
+        ++removeEnd;
+    }
+
+    if (removeEnd != m_activityRanges.begin()) {
+        m_activityRanges.erase(m_activityRanges.begin(), removeEnd);
+    }
+
+    if (!m_activityRanges.empty() && m_activityRanges.front().startHns < retainFrom) {
+        fern::AudioActivityRange& front = m_activityRanges.front();
+        const LONGLONG rangeEnd = front.startHns + front.durationHns;
+        front.startHns = retainFrom;
+        front.durationHns = std::max<LONGLONG>(1, rangeEnd - retainFrom);
+    }
 }
 
 void IsolatedAudioCapture::AppendPacketLocked(const BYTE* data, UINT32 frames, DWORD flags, UINT64 packetQpcHns) {

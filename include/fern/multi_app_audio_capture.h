@@ -43,6 +43,8 @@ private:
     void RefreshSources();
     bool ShouldRefreshSources(LONGLONG nowHns) const;
     bool HasSource(DWORD pid) const;
+    Source* FindSource(DWORD pid) const;
+    void PruneInactiveSources(LONGLONG nowHns);
     HRESULT AddSource(DWORD pid, const std::wstring& label);
     HRESULT AddMicrophoneSource(const std::wstring& deviceId);
     HRESULT AddCaptureSource(std::unique_ptr<IsolatedAudioCapture> capture, DWORD pid, const std::wstring& label);

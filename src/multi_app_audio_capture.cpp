@@ -27,6 +27,7 @@ namespace {
 
 constexpr LONGLONG kSourceRefreshIntervalHns = fern::HnsPerSecond;
 constexpr LONGLONG kEncoderTimestampRebaseToleranceHns = fern::HnsPerSecond / 20;
+constexpr LONGLONG kInactiveSourceGraceHns = 5 * fern::HnsPerSecond;
 constexpr int kMaxAudioSamplesPerPump = 64;
 
 struct AudioEncoderTimeline {
@@ -247,6 +248,7 @@ namespace fern {
 struct MultiAppAudioCapture::Source {
     DWORD pid = 0;
     DWORD streamIndex = 0;
+    LONGLONG lastSeenHns = 0;
     std::wstring label;
     std::unique_ptr<IsolatedAudioCapture> capture;
     ComPtr<IMFTransform> encoder;
@@ -292,7 +294,7 @@ void MultiAppAudioCapture::Stop() {
 void MultiAppAudioCapture::SetStartTime(UINT64 rawQpc) {
     m_masterStartRawQpc = rawQpc;
     for (auto& source : m_sources) {
-        if (source && source->capture) source->capture->SetStartTime(rawQpc);
+        if (source && source->capture) source->capture->SetStartTime(rawQpc, 0, m_replayBufferDurationHns);
     }
 }
 
@@ -386,12 +388,20 @@ void MultiAppAudioCapture::RefreshSources() {
         m_lastCandidateSignature = candidateSignature;
     }
 
+    const LONGLONG nowHns = CurrentQpcHns();
     for (const auto& candidate : candidates) {
-        if (candidate.pid == 0 || HasSource(candidate.pid)) continue;
+        if (candidate.pid == 0) continue;
+
+        if (Source* source = FindSource(candidate.pid)) {
+            source->lastSeenHns = nowHns;
+            continue;
+        }
+
         AddSource(candidate.pid, candidate.label);
     }
 
-    m_lastRefreshHns = CurrentQpcHns();
+    PruneInactiveSources(nowHns);
+    m_lastRefreshHns = nowHns;
 }
 
 bool MultiAppAudioCapture::ShouldRefreshSources(LONGLONG nowHns) const {
@@ -399,9 +409,34 @@ bool MultiAppAudioCapture::ShouldRefreshSources(LONGLONG nowHns) const {
 }
 
 bool MultiAppAudioCapture::HasSource(DWORD pid) const {
-    return std::any_of(m_sources.begin(), m_sources.end(), [pid](const std::unique_ptr<Source>& source) {
-        return source && source->pid == pid;
-    });
+    return FindSource(pid) != nullptr;
+}
+
+MultiAppAudioCapture::Source* MultiAppAudioCapture::FindSource(DWORD pid) const {
+    for (const auto& source : m_sources) {
+        if (source && source->pid == pid) return source.get();
+    }
+    return nullptr;
+}
+
+void MultiAppAudioCapture::PruneInactiveSources(LONGLONG nowHns) {
+    const LONGLONG retainHns = m_replayBufferDurationHns + kInactiveSourceGraceHns;
+
+    m_sources.erase(
+        std::remove_if(m_sources.begin(), m_sources.end(), [&](const std::unique_ptr<Source>& source) {
+            if (!source || source->pid == 0 || source->lastSeenHns <= 0) return false;
+            if (nowHns - source->lastSeenHns <= retainHns) return false;
+
+            std::wostringstream stream;
+            stream << L"Removing inactive track " << source->streamIndex
+                   << L" label=" << source->label
+                   << L" pid=" << source->pid;
+            fern::LogInfo(L"AUDIO", stream.str());
+
+            if (source->capture) source->capture->Stop();
+            return true;
+        }),
+        m_sources.end());
 }
 
 HRESULT MultiAppAudioCapture::AddSource(DWORD pid, const std::wstring& label) {
@@ -472,6 +507,7 @@ HRESULT MultiAppAudioCapture::AddCaptureSource(std::unique_ptr<IsolatedAudioCapt
     auto source = std::make_unique<Source>();
     source->pid = pid;
     source->streamIndex = m_nextStreamIndex++;
+    source->lastSeenHns = CurrentQpcHns();
     source->label = label;
     source->capture = std::move(capture);
     source->encoder = encoder;

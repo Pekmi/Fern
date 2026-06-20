@@ -39,6 +39,8 @@ public:
 private:
     std::deque<StreamSample> m_samples;
     LONGLONG m_maxDuration; //durée max x100ns
+    LONGLONG m_latestTime = 0;
+    bool m_hasLatestTime = false;
     std::mutex m_mutex;
 
     void EvictOldSamples();

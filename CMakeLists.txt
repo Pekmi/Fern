@@ -36,4 +36,4 @@ add_executable(Fern WIN32
     include/fern/multi_app_audio_capture.h
     include/fern/isolatedAudioCapture.h)
 
-target_link_libraries(Fern d3d11 dxgi mfplat mfuuid mfreadwrite mmdevapi RuntimeObject shell32 ole32 winmm user32 gdi32)
+target_link_libraries(Fern d3d11 dxgi mfplat mfuuid mfreadwrite mmdevapi RuntimeObject shell32 ole32 winmm user32 gdi32 psapi)

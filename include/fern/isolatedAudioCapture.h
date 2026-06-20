@@ -54,6 +54,7 @@ private:
     void AppendConvertedFramesLocked(const BYTE* data, UINT32 frameOffset, UINT32 frames, DWORD flags);
     void RecordActivityLocked(UINT64 startFrame, const short* samples, UINT32 frames);
     void AddActivityRangeLocked(UINT64 startFrame, UINT64 frames);
+    void PruneActivityRangesLocked(LONGLONG latestHns);
 
     bool IsFloatMixFormat() const;
     bool IsPcmMixFormat() const;
@@ -77,6 +78,7 @@ private:
     UINT64 m_timelineFramesWritten;
     UINT64 m_framesSent;
     UINT64 m_pendingLeadingSilenceFrames;
+    LONGLONG m_retainedHistoryHns;
     bool m_hasAlignedFirstPacket;
     std::vector<fern::AudioActivityRange> m_activityRanges;
 };

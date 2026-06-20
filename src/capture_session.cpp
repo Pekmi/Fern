@@ -18,6 +18,7 @@
 #include <d3d11_4.h>
 #include <dxgi1_2.h>
 #include <mferror.h>
+#include <psapi.h>
 #include <windows.h>
 
 #include <algorithm>
@@ -35,6 +36,7 @@ namespace {
 constexpr int kMaxCatchUpFramesPerLoop = 4;
 constexpr LONGLONG kSaveAudioSettleHns = 2500000LL;
 constexpr LONGLONG kDuplicationReconnectIntervalHns = HnsPerSecond / 2;
+constexpr LONGLONG kStatusLogIntervalHns = 60 * HnsPerSecond;
 
 struct DesktopCaptureTarget {
     D3D11Context d3d;
@@ -83,6 +85,22 @@ std::wstring OutputDescription(IDXGIOutput1* output) {
            << L" desktop=" << RectText(desc.DesktopCoordinates)
            << L" attached=" << (desc.AttachedToDesktop ? L"true" : L"false")
            << L" rotation=" << desc.Rotation;
+    return stream.str();
+}
+
+std::wstring ProcessMemoryText() {
+    PROCESS_MEMORY_COUNTERS_EX counters{};
+    counters.cb = sizeof(counters);
+    if (!GetProcessMemoryInfo(
+            GetCurrentProcess(),
+            reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),
+            sizeof(counters))) {
+        return L"memory=unavailable";
+    }
+
+    std::wostringstream stream;
+    stream << L"workingSetMb=" << (counters.WorkingSetSize / (1024ull * 1024ull))
+           << L" privateMb=" << (counters.PrivateUsage / (1024ull * 1024ull));
     return stream.str();
 }
 
@@ -568,7 +586,9 @@ void RunCaptureSession(const Settings& settings) {
     LONGLONG pendingSaveEndHns = 0;
     LONGLONG pendingSaveReadyHns = 0;
     bool duplicationLost = false;
+    bool videoBackpressureLogged = false;
     LONGLONG nextDuplicationReconnectHns = 0;
+    LONGLONG nextStatusLogHns = CurrentQpcHns() + kStatusLogIntervalHns;
     std::cout << "Capture Fern active (" << settings.fps << " FPS). F9 pour sauvegarder." << std::endl;
     fern::LogInfo(L"SESSION", L"Capture active.");
 
@@ -658,14 +678,31 @@ void RunCaptureSession(const Settings& settings) {
                 fern::LogInfo(L"VIDEO", L"Desktop duplication restored.");
             }
 
-            const LONGLONG nextBoundary = FrameBoundaryHns(nextFrameIndex + 1, settings.fps);
-            const LONGLONG duration = std::max<LONGLONG>(1, nextBoundary - relativeDueHns);
-            hr = PushFrameToEncoder(videoEncoder.Get(), copyTexture.Get(), relativeDueHns, duration);
-            if (hr == MF_E_NOTACCEPTING) break;
+            if (!duplicationLost) {
+                const LONGLONG nextBoundary = FrameBoundaryHns(nextFrameIndex + 1, settings.fps);
+                const LONGLONG duration = std::max<LONGLONG>(1, nextBoundary - relativeDueHns);
+                hr = PushFrameToEncoder(videoEncoder.Get(), copyTexture.Get(), relativeDueHns, duration);
+                if (hr == MF_E_NOTACCEPTING) {
+                    DrainVideoEncoder(videoEncoder.Get(), videoEventGen.Get(), ringBuffer, framesProduced, settings.fps);
+                    hr = PushFrameToEncoder(videoEncoder.Get(), copyTexture.Get(), relativeDueHns, duration);
+                }
 
-            if (FAILED(hr)) {
-                std::cerr << "VIDEO: ProcessInput failed 0x" << std::hex << hr << std::dec << std::endl;
-                fern::LogHResult(fern::LogLevel::Warning, L"VIDEO", L"ProcessInput failed.", hr);
+                if (hr == MF_E_NOTACCEPTING) {
+                    if (!videoBackpressureLogged) {
+                        fern::LogWarning(L"VIDEO", L"Encoder backpressure; dropping frames until it accepts input again.");
+                        videoBackpressureLogged = true;
+                    }
+                } else {
+                    if (videoBackpressureLogged) {
+                        fern::LogInfo(L"VIDEO", L"Encoder accepted input again.");
+                        videoBackpressureLogged = false;
+                    }
+
+                    if (FAILED(hr)) {
+                        std::cerr << "VIDEO: ProcessInput failed 0x" << std::hex << hr << std::dec << std::endl;
+                        fern::LogHResult(fern::LogLevel::Warning, L"VIDEO", L"ProcessInput failed.", hr);
+                    }
+                }
             }
 
             ++nextFrameIndex;
@@ -688,6 +725,17 @@ void RunCaptureSession(const Settings& settings) {
             StartAsyncSave(ringBuffer, videoEncoder.Get(), audioCapture, settings.storagePath, pendingSaveEndHns);
             fern::LogInfo(L"SAVE", L"Async save started.");
             pendingSave = false;
+        }
+
+        const LONGLONG statusNowHns = CurrentQpcHns();
+        if (statusNowHns >= nextStatusLogHns) {
+            std::wostringstream stream;
+            stream << L"samples=" << ringBuffer.GetSampleCount()
+                   << L" audioSources=" << audioCapture.SourceCount()
+                   << L" duplicationLost=" << (duplicationLost ? L"true" : L"false")
+                   << L" " << ProcessMemoryText();
+            fern::LogInfo(L"STATUS", stream.str());
+            nextStatusLogHns = statusNowHns + kStatusLogIntervalHns;
         }
 
         const LONGLONG nextDueHns = masterStartHns + FrameBoundaryHns(nextFrameIndex, settings.fps);

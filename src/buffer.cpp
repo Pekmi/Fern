@@ -22,23 +22,28 @@ void RingBuffer::AddSample(IMFSample* pSample, DWORD streamIndex) {
     StreamSample ss;
     ss.sample = pSample;
     ss.streamIndex = streamIndex;
+
+    LONGLONG sampleTime = 0;
+    if (SUCCEEDED(pSample->GetSampleTime(&sampleTime))) {
+        if (!m_hasLatestTime || sampleTime > m_latestTime) {
+            m_latestTime = sampleTime;
+            m_hasLatestTime = true;
+        }
+    }
     
     m_samples.push_back(std::move(ss));
     EvictOldSamples();
 }
 
 void RingBuffer::EvictOldSamples() {
-    if (m_samples.size() < 2) return;
-
-    LONGLONG latestTime = 0;
-    m_samples.back().sample->GetSampleTime(&latestTime);
+    if (m_samples.size() < 2 || !m_hasLatestTime) return;
 
     while (m_samples.size() > 1) {
         LONGLONG firstTime = 0;
         m_samples.front().sample->GetSampleTime(&firstTime);
 
         //nettoyage basé sur la durée max
-        if (latestTime - firstTime > m_maxDuration) {
+        if (m_latestTime - firstTime > m_maxDuration) {
             m_samples.pop_front();
         } else {
             break;
@@ -54,6 +59,8 @@ size_t RingBuffer::GetSampleCount() {
 void RingBuffer::Clear() {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_samples.clear();
+    m_latestTime = 0;
+    m_hasLatestTime = false;
 }
 
 std::deque<StreamSample> RingBuffer::GetSnapshot() {
